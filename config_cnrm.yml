@@ -1,0 +1,14 @@
+
+input_path:
+    single_h5_file: '/cnrm/vegeo/fransenr/CODES/lsa_saf/input_data/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000'
+
+
+# Dir to store cache and output
+output_path:
+    extract: './output_extract'
+    merge: './output_merge'
+    trend: './output_trend'
+    plot: './output_plot'
+    merged_filename: 'merged_trends.nc'
+
+
