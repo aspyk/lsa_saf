@@ -17,19 +17,37 @@ import cartopy.crs as ccrs
 class ETALTools:
 
     def __init__(self, yfile):
+        #self.var = 'AL-BB-DH'
+        self.var = 'Q-Flag'
         self.read_yaml_config_file(yfile)
 
     def load_nc_file(self, h5file):
         ds = xr.open_dataset(h5file) 
 
     def load_h5_file(self, h5file):
-        self.hf = h5py.File(h5file, 'r')['AL-BB-DH'][::100,::100]
+        sub = 1000
+        self.hf = h5py.File(h5file, 'r')[self.var][::sub,::sub]
+        print(self.hf)
         print(self.hf.shape, self.hf.itemsize)
+
+    def create_lon_lat(self):
+        ''' Create lon/lat arrays for input sinusoidal data (same shape)'''
+        s = self.hf.shape
+        lon = np.linspace(-180, 180, s[1])
+        lat = np.linspace(90, -90, s[0])
+        lon, lat = np.meshgrid(lon,lat)
+        lon = lon/np.cos(np.deg2rad(lat))
+        self.mask = np.abs(lon)>180.
+        self.lon[self.mask] = np.nan
+        self.lat[self.mask] = np.nan
+        print(self.lon)
+        print(self.lat)
 
     def load_nc_file_list(self, h5list):
         ds = xr.open_mfdataset(h5list, parallel=True, chunks='auto') 
         
     def plot_sinusoidal_proj(self, array):
+        ''' Plot data using cartopy processing'''
         if 1:
             fig = plt.figure(figsize=(10, 5))
             ax = fig.add_subplot(1, 1, 1, projection=ccrs.Sinusoidal())
@@ -52,18 +70,24 @@ class ETALTools:
     
         plt.tight_layout()
     
-        imname = 'res_global_map.png'
-        imname = 'res_global_map_Sinusoidal.png'
+        imname = 'res_global_map_{}.png'.format(self.var)
+        imname = 'res_global_map_Sinusoidal_{}.png'.format(self.var)
         plt.savefig(imname, dpi=100)
         print('--- Global map saved to: {}'.format(imname))
 
     def plot_2D_array(self, array):
+        ''' Simply plot a 2D array (useful for debug)'''
         fig = plt.figure()
         ax = fig.add_subplot(1, 1, 1)
-    
+   
         ax.imshow(array)
 
-        imname = 'res_array.png'
+        # Write the value in each pixel
+        #for (j,i),label in np.ndenumerate(array):
+        for (j,i),label in np.ndenumerate(self.hf):
+            ax.text(i, j, label, ha='center', va='center', fontsize=6)
+
+        imname = 'res_2darray_{}.png'.format(self.var)
         plt.savefig(imname)
         print('--- Array image saved to: {}'.format(imname))
 
@@ -77,7 +101,7 @@ class ETALTools:
         print('--- Read config file OK.')
  
     def transform_with_pyproj(self):
-        from pyproj import CRS, Transformer
+        from  pyproj import CRS, Transformer
         
         crs0 = CRS.from_proj4("+proj=eqc +units=km")
         crs3 = CRS.from_proj4("+proj=lonlat +units=km")
@@ -108,8 +132,9 @@ class ETALTools:
             #h5file = '/cnrm/vegeo/juncud/NO_SAVE/ETAL/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000'
             h5file = self.config['input_path']['single_h5_file']
             self.load_h5_file(h5file)
+            self.create_lon_lat()
             ti('load')
-            self.plot_2D_array(self.hf)
+            self.plot_2D_array(np.where(self.mask, np.nan, self.hf))
             ti('imshow')
             self.plot_sinusoidal_proj(self.hf)
             ti('project')
