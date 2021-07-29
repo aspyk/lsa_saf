@@ -6,6 +6,7 @@ h52img*.png
 res*.png
 bla*.png
 *.out
+*.vtu
 ###
 
 # Byte-compiled / optimized / DLL files
