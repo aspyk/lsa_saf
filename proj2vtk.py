@@ -144,6 +144,9 @@ def msg_to_vtk(stride=8):
     return msg_grid, valid_mask, out_shape
 
 def etal_to_vtk(stride=100):
+
+    t0 = SimpleTimer()
+
     var = 'AL-BB-DH'
     etal = h5py.File('.\\input_data\\HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000', 'r')[var]
 
@@ -151,19 +154,27 @@ def etal_to_vtk(stride=100):
     lon = np.linspace(-180, 180, etal.shape[1])
     lat = np.linspace(90, -90, etal.shape[0])
 
+    t0('lon_lat')
+
     # already discarding part of ETAL data that is for sure not in the MSG disk
     iLatStartEps = 850
     iLatEndEps   = 17150 # 6501
     iLonStartEps = 9000 # 22000
     iLonEndEps   = 27000 # 25501
     etal = etal[iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride]
+    
+    t0('h5_slice')
+
     lat = lat[iLatStartEps:iLatEndEps:stride]
     lon = lon[iLonStartEps:iLonEndEps:stride]
 
+    t0('lon_lat_slice')
+
     if 1:
-        plt.imshow(etal)
+        ims = plt.imshow(etal, cmap='jet')
         plt.tight_layout()
-        plt.savefig("res_proj2vtk_input.png")
+        plt.colorbar(ims)
+        plt.savefig("res_proj2vtk_input.png", dpi=200)
 
     lon, lat = np.meshgrid(lon,lat)
     lon = lon/np.cos(np.deg2rad(lat))
@@ -178,6 +189,8 @@ def etal_to_vtk(stride=100):
     print('min/max lat:', lat.min(), lat.max())
     print('min/max lon:', lon.min(), lon.max())
 
+    t0('mask_nonvalid')
+
     mask_fov = np.logical_and(np.abs(lon)<81, np.abs(lat)<81)  
     lon = lon[mask_fov] 
     lat = lat[mask_fov]
@@ -187,13 +200,24 @@ def etal_to_vtk(stride=100):
     print('min/max lat:', lat.min(), lat.max())
     print('min/max lon:', lon.min(), lon.max())
 
+    t0('mask_fov')
+
     x,y,z = lonlat_to_xyz(lon, lat, unit='deg')
+
+    t0('to_xyz')
 
     print(x.shape)
 
     dic_var = {var:etal}
 
     etal_grid = array_to_vtk_scatter(x, y, z, dic_var, fname='res_etal')
+    
+    t0('to_vtk')
+
+    t0.show()
+
+    sys.exit()
+
     return etal_grid
 
 def etal_to_msg(source, target):
@@ -240,23 +264,24 @@ def export_interpolated_msg(interp, valid_mask, msg_data_shape):
 
         eps_on_msg = np.zeros(msg_data_shape)-1.
         print(eps_on_msg.shape)
-        eps_on_msg[valid_mask] = 1000*numpy_var
+        eps_on_msg[valid_mask] = numpy_var
 
         plt.clf()
-        plt.imshow(eps_on_msg)
+        ims = plt.imshow(eps_on_msg, cmap='jet')
         plt.tight_layout()
-        plt.savefig("res_proj2vtk_output.png")
+        plt.colorbar(ims)
+        plt.savefig("res_proj2vtk_output.png", dpi=200)
 
 def main():
 
     ti = SimpleTimer()
 
     print('### MSG extraction')
-    msg_grid, valid_mask, msg_shape = msg_to_vtk(stride=2)
+    msg_grid, valid_mask, msg_shape = msg_to_vtk(stride=10)
     ti('MSG')
     
     print('### ETAL extraction')
-    etal_grid = etal_to_vtk(stride=20)
+    etal_grid = etal_to_vtk(stride=100)
     ti('ETAL')
     
     print('### Interpolation')
