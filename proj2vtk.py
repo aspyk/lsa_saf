@@ -8,6 +8,8 @@ from tools import SimpleTimer
 
 import matplotlib.pyplot as plt
 
+from datetime import datetime as dtime
+
 
 def numpy_to_vtkpoints(pts_array):
     '''
@@ -15,11 +17,14 @@ def numpy_to_vtkpoints(pts_array):
     Return a vtkPoints
     '''
     points = vtk.vtkPoints()
-    points.SetNumberOfPoints(pts_array.shape[0])
-    for ip,pt in enumerate(pts_array):
-        #points.InsertNextPoint(pt)
-        points.SetPoint(ip,pt)
-    points.Modified()
+    if 0:
+        points.SetNumberOfPoints(pts_array.shape[0])
+        for ip,pt in enumerate(pts_array):
+            #points.InsertNextPoint(pt)
+            points.SetPoint(ip,pt)
+        points.Modified()
+    else:
+        points.SetData(ns.numpy_to_vtk(pts_array, deep=True))
     return points 
 
 def array_to_vtk(x, y, z, var):
@@ -73,7 +78,10 @@ def array_to_vtk_scatter(x, y, z, dic_var=None, fname='res_test'):
 
     np_pts = np.array((x,y,z)).T
 
+    t1 = SimpleTimer()
     vtk_pts = numpy_to_vtkpoints(np_pts) 
+    t1('vtkpoints')
+    t1.show()
 
     # Create vtk point data
     vars = []
@@ -89,14 +97,15 @@ def array_to_vtk_scatter(x, y, z, dic_var=None, fname='res_test'):
     for var in vars:
         grid.GetPointData().AddArray(var)
 
-    # Write the mesh
-    writer = vtk.vtkXMLUnstructuredGridWriter()
-    fname = "{}.vtu".format(fname)
-    writer.SetFileName(fname)
-    writer.SetInputData(grid)
-    #writer->SetDataModeToAscii() #Optional for debug - set the mode. The default is binary.
-    writer.Write()
-    print("--- VTK file saved to: {}".format(fname))
+    if 0:
+        # Write the mesh
+        writer = vtk.vtkXMLUnstructuredGridWriter()
+        fname = "{}.vtu".format(fname)
+        writer.SetFileName(fname)
+        writer.SetInputData(grid)
+        #writer->SetDataModeToAscii() #Optional for debug - set the mode. The default is binary.
+        writer.Write()
+        print("--- VTK file saved to: {}".format(fname))
 
     return grid
 
@@ -110,13 +119,19 @@ def lonlat_to_xyz(lon, lat, R=1.0, unit='rad'):
     return x,y,z
 
 def msg_to_vtk(stride=8):
-    lat = h5py.File('hdf5_lsasaf_msg_lat_msg-disk_4bytesprecision', 'r')['LAT']
-    lon = h5py.File('hdf5_lsasaf_msg_lon_msg-disk_4bytesprecision', 'r')['LON']
-    lwmask = h5py.File('hdf5_lsasaf_usgs-igbp_lwmask_msg-disk', 'r')['LWMASK']
+    msg_lat_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision'
+    msg_lon_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision'
+    #'hdf5_lsasaf_msg_lat_msg-disk_4bytesprecision'
+    #'hdf5_lsasaf_msg_lon_msg-disk_4bytesprecision'
+    #'hdf5_lsasaf_usgs-igbp_lwmask_msg-disk'
     
-    lat = lat[::stride,::stride]/10000.
-    lon = lon[::stride,::stride]/10000.
-    lwmask = lwmask[::stride,::stride]
+    with h5py.File(msg_lat_file, 'r') as flat:
+        lat = flat['LAT'][::stride,::stride]/10000.
+    with h5py.File(msg_lon_file, 'r') as flon:
+        lon = flon['LON'][::stride,::stride]/10000.
+    with h5py.File('hdf5_lsasaf_usgs-igbp_lwmask_msg-disk', 'r') as flwmask:
+        lwmask = flwmask['LWMASK'][::stride,::stride]
+    
     out_shape = lwmask.shape
 
     if 0:
@@ -148,42 +163,57 @@ def etal_to_vtk(stride=100):
     t0 = SimpleTimer()
 
     var = 'AL-BB-DH'
-    etal = h5py.File('.\\input_data\\HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000', 'r')[var]
-
-    ## Create lonlat coords for etal sinusoidal projection
-    lon = np.linspace(-180, 180, etal.shape[1])
-    lat = np.linspace(90, -90, etal.shape[0])
-
-    t0('lon_lat')
-
+    date_ = '2020-DEC-05'
+    dateObj = dtime.strptime(date_, '%Y-%b-%d')
+    dateForFile = dtime.strftime(dateObj, '%Y%m%d')
+    
     # already discarding part of ETAL data that is for sure not in the MSG disk
     iLatStartEps = 850
     iLatEndEps   = 17150 # 6501
     iLonStartEps = 9000 # 22000
     iLonEndEps   = 27000 # 25501
-    etal = etal[iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride]
     
+    with h5py.File(f'/cnrm/vegeo/juncud/NO_SAVE/ETAL/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_{dateForFile}0000','r+') as h5f:
+        etal_shape  = h5f[var].shape
+        etal = h5f[var][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride]
+    #etal = h5py.File('.\\input_data\\HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000', 'r')[var]
+
+
     t0('h5_slice')
+
+    ## Create lonlat coords for etal sinusoidal projection
+    lon = np.linspace(-180, 180, etal_shape[1])
+    lat = np.linspace(90, -90, etal_shape[0])
+
+    t0('lon_lat')
 
     lat = lat[iLatStartEps:iLatEndEps:stride]
     lon = lon[iLonStartEps:iLonEndEps:stride]
 
     t0('lon_lat_slice')
 
-    if 1:
+    if 0:
         ims = plt.imshow(etal, cmap='jet')
         plt.tight_layout()
         plt.colorbar(ims)
         plt.savefig("res_proj2vtk_input.png", dpi=200)
 
+        t0('plot_imshow')
+
     lon, lat = np.meshgrid(lon,lat)
     lon = lon/np.cos(np.deg2rad(lat))
 
-    mask_nonvalid = etal==-1. # Discard points without valid albedo value (outside projection and in the ocean)
+    ## Version without np.where is a bit quicker, you can test it with the following if:
+    if 0:
+        mask_nonvalid = etal!=-1. # Discard points without valid albedo value (outside projection and in the ocean)
+        t0('mask_direct')
+    else:
+        mask_nonvalid = np.where(etal!=-1.) # Discard points without valid albedo value (outside projection and in the ocean)
+        t0('mask_where')
     s0 = lon.size
-    lon = lon[~mask_nonvalid] 
-    lat = lat[~mask_nonvalid]
-    etal = etal[~mask_nonvalid]
+    lon = lon[mask_nonvalid] 
+    lat = lat[mask_nonvalid]
+    etal = etal[mask_nonvalid]
     s1= lon.size
     print("--- {:.2f} % data masked".format(100*(s0-s1)/s0))
     print('min/max lat:', lat.min(), lat.max())
@@ -216,8 +246,6 @@ def etal_to_vtk(stride=100):
 
     t0.show()
 
-    sys.exit()
-
     return etal_grid
 
 def etal_to_msg(source, target):
@@ -226,14 +254,14 @@ def etal_to_msg(source, target):
     locator.SetDataSet(source)
     locator.BuildLocator()
 
-    # Use a gaussian kernel
+    # Gaussian kernel
     gaussianKernel = vtk.vtkGaussianKernel()
     gaussianKernel.SetRadius(0.1)
     gaussianKernel.SetSharpness(4)
 
-    # Use a linear kernel
+    # Linear kernel
     linearKernel = vtk.vtkLinearKernel()
-    linearKernel.SetRadius(0.005)
+    linearKernel.SetRadius(0.001)
 
     interpolator = vtk.vtkPointInterpolator()
     interpolator.SetInputData(target)
@@ -277,13 +305,16 @@ def main():
     ti = SimpleTimer()
 
     print('### MSG extraction')
-    msg_grid, valid_mask, msg_shape = msg_to_vtk(stride=10)
+    msg_grid, valid_mask, msg_shape = msg_to_vtk(stride=1)
     ti('MSG')
     
     print('### ETAL extraction')
-    etal_grid = etal_to_vtk(stride=100)
+    etal_grid = etal_to_vtk(stride=1)
     ti('ETAL')
     
+
+    sys.exit()
+
     print('### Interpolation')
     interp = etal_to_msg(etal_grid, msg_grid)
     ti('interpolation')
