@@ -11,9 +11,13 @@ import matplotlib.pyplot as plt
 import copy
 from time import process_time
 
+from tools import SimpleTimer
+
 
 # probably need a different interpolation method for dealing with NaN's, maybe: https://stackoverflow.com/questions/34408293/2-d-interpolation-ignoring-nan-values
 # alternative approach: for each MDAL pixel form ETAL estimate by taking mean in certain radius? <---- THIS IS IMPLEMENTED AT THE MOMENT
+
+ti = SimpleTimer()
 
 albVar = 'AL-BB-BH'
 date_ = '2020-DEC-05'
@@ -40,6 +44,7 @@ with h5py.File(f'/cnrm/vegeo/juncud/NO_SAVE/aod-test-2/v1/HDF5_LSASAF_MSG_ALBEDO
 
 # only use every nth pixel
 stride = 4
+stride = 10
 
 # lon and lat limits
 # (already discarding part of ETAL data that is for sure not in the MSG disk)
@@ -165,6 +170,10 @@ indexArray_q4 = np.indices(epsLon_q4_1d.shape)[0]
 eps_geos = np.full((nLat, nLon), np.nan, dtype='f4')
 actualILat = 0
 
+
+ti('preproc')
+
+
 #TIME RESULTS
 #Find quadrant: 4.773999989993172e-06 s
 #Create mask: 0.009312423999972452 s
@@ -233,9 +242,13 @@ for iLat in range(nLat):
             print(f'Lon / Lat: {msgLon[iLat,iLon]} / {msgLat[iLat,iLon]}')
             print(f'last no. of pixels in box: {np.sum(neighborMask)}')
             milestone += 1
+            ti(f'loopProgress{round(loopProgress)}%,iLat{iLat}')
         loopIndex += 1
         #print(f'inner loop: {process_time() - t_inner} s') 
 
+ti('endofproc')
+
+ti.show()
 
 with h5py.File(f'eps_geos_{dateForFile}0000', 'w') as f:
     dataset = f.create_dataset('AL-BB-BH', chunks=True, compression='gzip', fletcher32=True, shape=(nLat, nLon), dtype=float)
