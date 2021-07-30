@@ -17,15 +17,15 @@ import cartopy.crs as ccrs
 class ETALTools:
 
     def __init__(self, yfile):
-        #self.var = 'AL-BB-DH'
-        self.var = 'Q-Flag'
+        self.var = 'AL-BB-DH'
+        #self.var = 'Q-Flag'
         self.read_yaml_config_file(yfile)
 
     def load_nc_file(self, h5file):
         ds = xr.open_dataset(h5file) 
 
     def load_h5_file(self, h5file):
-        sub = 1000
+        sub = 10
         self.hf = h5py.File(h5file, 'r')[self.var][::sub,::sub]
         print(self.hf)
         print(self.hf.shape, self.hf.itemsize)
@@ -35,9 +35,9 @@ class ETALTools:
         s = self.hf.shape
         lon = np.linspace(-180, 180, s[1])
         lat = np.linspace(90, -90, s[0])
-        lon, lat = np.meshgrid(lon,lat)
-        lon = lon/np.cos(np.deg2rad(lat))
-        self.mask = np.abs(lon)>180.
+        self.lon, self.lat = np.meshgrid(lon,lat)
+        self.lon = self.lon/np.cos(np.deg2rad(self.lat))
+        self.mask = np.abs(self.lon)>180.
         self.lon[self.mask] = np.nan
         self.lat[self.mask] = np.nan
         print(self.lon)
@@ -134,7 +134,7 @@ class ETALTools:
             self.load_h5_file(h5file)
             self.create_lon_lat()
             ti('load')
-            self.plot_2D_array(np.where(self.mask, np.nan, self.hf))
+            #self.plot_2D_array(np.where(self.mask, np.nan, self.hf))
             ti('imshow')
             self.plot_sinusoidal_proj(self.hf)
             ti('project')
