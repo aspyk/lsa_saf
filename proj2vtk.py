@@ -370,6 +370,13 @@ def export_to_h5(data, **param):
         h5_file[param['var']] = data
     print(f"--- Output h5 saved to: {h5_name}")
 
+def load_h5(**param):
+    h5_name = f"res_proj2vtk_output_{params_to_string(param)}.h5"
+    with h5py.File(h5_name, 'r') as h5_file:
+        data = h5_file[param['var']][:]
+    print(f"--- Read h5 from: {h5_name}")
+    return data
+
 def compare_with_real_msg(msg_interp, **param):
     date = param['date']
     var = param['var']
@@ -395,32 +402,38 @@ def main(param):
 
     ti = SimpleTimer()
 
-    print('### MSG extraction')
-    msg_grid, valid_mask, msg_shape = msg_to_vtk(stride=1)
-    ti('MSG')
-    
-    print('### ETAL extraction')
-    etal_grid = etal_to_vtk(stride=1, **param)
-    ti('ETAL')
-    
+    ## Perform interpolation
+    if 0:
+        print('### MSG extraction')
+        msg_grid, valid_mask, msg_shape = msg_to_vtk(stride=1)
+        ti('MSG')
+        
+        print('### ETAL extraction')
+        etal_grid = etal_to_vtk(stride=1, **param)
+        ti('ETAL')
+        
 
-    print('### Interpolation')
-    kernel = 'mean'
-    #kernel = 'inverse_distance'
-    #kernel = 'gaussian'
-    radius = 3
-    #interpolation = etal_to_msg(etal_grid, msg_grid, kernel=kernel, radius=radius)
-    interpolation = etal_to_msg(etal_grid, msg_grid, **param)
-    ti('interpolation')
+        print('### Interpolation')
+        kernel = 'mean'
+        #kernel = 'inverse_distance'
+        #kernel = 'gaussian'
+        radius = 3
+        #interpolation = etal_to_msg(etal_grid, msg_grid, kernel=kernel, radius=radius)
+        interpolation = etal_to_msg(etal_grid, msg_grid, **param)
+        ti('interpolation')
+        
+        print('### Export interpolated data')
+        for name,data in msg_var_vtk_to_numpy(interpolation, valid_mask, msg_shape):
+            ## Debug
+            if 0:
+                var_dic[param['var']] = 6000*(np.indices(var_dic[param['var']].shape).sum(axis=0) % 2)
+            export_to_image(data, **param)
+            export_to_h5(data, **param)
+            ti('export')    
     
-    print('### Export interpolated data')
-    for name,data in msg_var_vtk_to_numpy(interpolation, valid_mask, msg_shape):
-        ## Debug
-        if 0:
-            var_dic[param['var']] = 6000*(np.indices(var_dic[param['var']].shape).sum(axis=0) % 2)
-        export_to_image(data, **param)
-        export_to_h5(data, **param)
-        ti('export')    
+    ## Load cache file
+    else:
+        data = load_h5(**param)
 
     print('### Compare results')
     compare_with_real_msg(data, **param)
