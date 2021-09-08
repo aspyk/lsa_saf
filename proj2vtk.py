@@ -10,6 +10,9 @@ import matplotlib.pyplot as plt
 
 from datetime import datetime as dtime
 
+import traceback
+import itertools
+
 
 def numpy_to_vtkpoints(pts_array):
     '''
@@ -65,11 +68,12 @@ def array_to_vtk(x, y, z, var):
     lag_tri.SetCells(vtk.VTK_LAGRANGE_TRIANGLE, cellarray)
 
     # Write the mesh
-    writer = vtk.vtkXMLUnstructuredGridWriter()
-    writer.SetFileName("test.vtu")
-    writer.SetInputData(lag_tri)
-    #writer->SetDataModeToAscii() #Optional for debug - set the mode. The default is binary.
-    writer.Write()
+    if 0:
+        writer = vtk.vtkXMLUnstructuredGridWriter()
+        writer.SetFileName("test.vtu")
+        writer.SetInputData(lag_tri)
+        #writer->SetDataModeToAscii() #Optional for debug - set the mode. The default is binary.
+        writer.Write()
 
 def array_to_vtk_scatter(x, y, z, dic_var=None, fname='res_test'):
     x = x.ravel()
@@ -310,14 +314,15 @@ def etal_to_msg(source, target, kernel='mean', radius=0.001, **param):
     interpolator.Update()
 
     # Write the result
-    writer = vtk.vtkXMLUnstructuredGridWriter()
-    fname = 'res_msg_interpolated'
-    fname = "{}.vtu".format(fname)
-    writer.SetFileName(fname)
-    writer.SetInputData(interpolator.GetOutput())
-    #writer->SetDataModeToAscii() #Optional for debug - set the mode. The default is binary.
-    writer.Write()
-    print("--- VTK file saved to: {}".format(fname))
+    if 0:
+        writer = vtk.vtkXMLUnstructuredGridWriter()
+        fname = 'res_msg_interpolated'
+        fname = "{}.vtu".format(fname)
+        writer.SetFileName(fname)
+        writer.SetInputData(interpolator.GetOutput())
+        #writer->SetDataModeToAscii() #Optional for debug - set the mode. The default is binary.
+        writer.Write()
+        print("--- VTK file saved to: {}".format(fname))
 
     return interpolator
 
@@ -344,12 +349,16 @@ def params_to_string(param, sep1='_', sep2='-'):
     return param_str
 
 def export_to_image(data, plot_param={}, **param):
+    from textwrap import wrap
     plt.clf()
-    #ims = plt.imshow(data, cmap='jet', vmin=0, vmax=6000)
-    ims = plt.imshow(data, **plot_param)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ims = ax.imshow(data, **plot_param)
     plt.tight_layout()
     plt.colorbar(ims)
-    plt.title(params_to_string(param, sep1=' | ', sep2=':'), fontsize=10)
+    param_str = '\n'.join(wrap(params_to_string(param, sep1=' | ', sep2=':'), 60))
+    ax.set_title(params_to_string(param, sep1=' | ', sep2=':'), fontsize=10 )
+    fig.subplots_adjust(top=0.9)
     param_str = params_to_string(param)
     im_name = f"res_proj2vtk_output_{params_to_string(param)}.png"
     plt.savefig(im_name, dpi=200)
@@ -375,26 +384,16 @@ def compare_with_real_msg(msg_interp, **param):
     albedo = {'cmap':'jet', 'vmin':0, 'vmax':6000}
     albedo_diff = {'cmap':'seismic', 'vmin':-2000, 'vmax':2000}
 
-    export_to_image(msg_interp, source='interp', plot_param=albedo, **param)
-    export_to_image(msg_ref, source='ref', plot_param=albedo, date=param['date'])
-    export_to_image(msg_ref-msg_interp, source='diffRefVtk', plot_param=albedo_diff, **param)
-    export_to_image(msg_ref-msg_daniel, source='diffRefDaniel', plot_param=albedo_diff, var=param['var'], date=param['date'])
-    export_to_image(msg_daniel-msg_interp, source='diffDanielVtk', plot_param=albedo_diff, **param)
+    export_to_image(msg_interp,            plot_param=albedo,      **param,                              source='interp')
+    export_to_image(msg_ref,               plot_param=albedo,      var=param['var'], date=param['date'], source='ref')
+    export_to_image(msg_ref-msg_interp,    plot_param=albedo_diff, **param,                              source='diffRefVtk')
+    export_to_image(msg_ref-msg_daniel,    plot_param=albedo_diff, var=param['var'], date=param['date'], source='diffRefDaniel')
+    export_to_image(msg_daniel-msg_interp, plot_param=albedo_diff, **param,                              source='diffDanielVtk')
 
 
-def main():
+def main(param):
 
     ti = SimpleTimer()
-
-    param = {
-            #'var' : 'AL-BB-DH',
-            'var' : 'AL-BB-BH',
-            'date' : '20201215',
-            'kernel' : 'mean',
-            #'kernel' : 'inverse_distance',
-            #'kernel' : 'gaussian',
-            'radius' : 3,
-            }
 
     print('### MSG extraction')
     msg_grid, valid_mask, msg_shape = msg_to_vtk(stride=1)
@@ -430,7 +429,51 @@ def main():
 
     ti.show()
 
+def combine_param(param_dic):
+    """
+    Iterator returning a dict made of combination of all list values in input dict, using the same keys.
+    An id is also add in the output dict.
+
+    Example:
+    input dict: {'a':[1,2], 'b'=[x,y]}
+    output dicts:
+    #1: {'id':'00', 'a':1, 'b':x}
+    #2: {'id':'01', 'a':1, 'b':y}
+    #3: {'id':'02', 'a':2, 'b':x}
+    #4: {'id':'03', 'a':2, 'b':y}
+    """
+    ii = 0
+    n_combi = len(list(itertools.product(*list(param_dic.values()))))
+
+    for v in itertools.product(*list(param_dic.values())):
+        print(f'--- Parameter combination {ii+1}/{n_combi}')
+        tmp = {}
+        tmp['id'] = str(ii).zfill(len(str(n_combi))+1)
+        for ik,k in enumerate(param_dic.keys()):
+            tmp[k] = v[ik]
+        yield tmp
+        
+        ii+=1
+
+
 if __name__=='__main__':
     
-    interp = main()
+    test = {
+            'var' : ['AL-BB-BH'],
+            'date' : ['20201205','20201215','20201225'],
+            'kernel' : ['mean','inverse_distance','gaussian'],
+            'radius' : [3,5,10],
+           }
 
+    for param in combine_param(test):
+        for k,v in param.items():
+            print(k, ':', v)
+        try:
+            interp = main(param)
+            pass
+        except Exception as e:
+            print('--- ERROR IN PROCESSING ---')
+            print(traceback.format_exc())
+            #logging.error(traceback.format_exc())
+
+        print('---------------')
