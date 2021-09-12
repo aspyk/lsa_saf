@@ -13,6 +13,8 @@ from datetime import datetime as dtime
 import traceback
 import itertools
 
+from vtk_tools import vtk_interpolation
+
 
 def numpy_to_vtkpoints(pts_array):
     '''
@@ -122,7 +124,7 @@ def lonlat_to_xyz(lon, lat, R=1.0, unit='rad'):
     z = R * np.sin(lat)
     return x,y,z
 
-def msg_to_vtk(stride=10, **param):
+def msg_to_vtk(stride=10, lonlat_only=False, **param):
     msg_lat_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision'
     msg_lon_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision'
     #'hdf5_lsasaf_msg_lat_msg-disk_4bytesprecision'
@@ -161,6 +163,9 @@ def msg_to_vtk(stride=10, **param):
         print('min/max lat:', lat.min(), lat.max())
         print('min/max lon:', lon.min(), lon.max())
 
+    if lonlat_only:
+        return lon, lat, valid_mask, out_shape
+
     lat = np.deg2rad(lat)
     lon = np.deg2rad(lon)
 
@@ -171,7 +176,7 @@ def msg_to_vtk(stride=10, **param):
     msg_grid = array_to_vtk_scatter(x, y, z, fname='res_msg')
     return msg_grid, valid_mask, out_shape
 
-def etal_to_vtk(stride=100, var=None, date=None, **param):
+def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
 
     t0 = SimpleTimer()
 
@@ -262,13 +267,17 @@ def etal_to_vtk(stride=100, var=None, date=None, **param):
 
     t0('mask_fov')
 
+    dic_var = {var:etal}
+
+    if lonlat_only:
+        return lon, lat, dic_var
+
     x,y,z = lonlat_to_xyz(lon, lat, unit='deg')
 
     t0('to_xyz')
 
     print(x.shape)
 
-    dic_var = {var:etal}
     etal_grid = array_to_vtk_scatter(x, y, z, dic_var, fname='res_etal')
     
     t0('to_vtk')
@@ -350,6 +359,14 @@ def params_to_string(param, sep1='_', sep2='-'):
 
 def export_to_image(data, plot_param={}, **param):
     from textwrap import wrap
+    
+    if 1:
+        lat1 = 380
+        lat2 = 480
+        lon1 = 1950
+        lon2 = 2050
+        data = data[lat1:lat2,lon1:lon2]
+
     plt.clf()
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -388,11 +405,20 @@ def compare_with_real_msg(msg_interp, **param):
     with h5py.File(msg_daniel_file) as h5ref:
         msg_daniel = 1e4*h5ref[var][:]
 
+    with h5py.File('hdf5_lsasaf_usgs-igbp_lwmask_msg-disk', 'r') as flwmask:
+        lwmask = flwmask['LWMASK'][:]
+
+    nonvalid_mask = np.where(lwmask!=1)
+    msg_ref[nonvalid_mask] = -1
+    msg_daniel[nonvalid_mask] = -1
+    
     albedo = {'cmap':'jet', 'vmin':0, 'vmax':6000}
     albedo_diff = {'cmap':'seismic', 'vmin':-2000, 'vmax':2000}
 
-    export_to_image(msg_interp,            plot_param=albedo,      **param,                              source='interp')
-    export_to_image(msg_ref,               plot_param=albedo,      var=param['var'], date=param['date'], source='ref')
+    export_to_image(msg_interp,            plot_param=albedo,      **param,                              source='Vtk')
+    export_to_image(msg_ref,               plot_param=albedo,      var=param['var'], date=param['date'], source='Ref')
+    export_to_image(msg_daniel,            plot_param=albedo,      var=param['var'], date=param['date'], source='Daniel')
+
     export_to_image(msg_ref-msg_interp,    plot_param=albedo_diff, **param,                              source='diffRefVtk')
     export_to_image(msg_ref-msg_daniel,    plot_param=albedo_diff, var=param['var'], date=param['date'], source='diffRefDaniel')
     export_to_image(msg_daniel-msg_interp, plot_param=albedo_diff, **param,                              source='diffDanielVtk')
@@ -442,6 +468,48 @@ def main(param):
 
     ti.show()
 
+
+def main_vtk(param):
+    
+    ti = SimpleTimer()
+
+    if 1:
+
+        print('### MSG extraction (target)')
+        tlon, tlat, valid_mask, msg_shape = msg_to_vtk(stride=1, lonlat_only=True)
+        ti('MSG')
+        
+        print('### ETAL extraction (source)')
+        slon, slat, dic_var = etal_to_vtk(stride=100, lonlat_only=True, **param)
+        ti('ETAL')
+
+        print('### Interpolation')
+        interp = vtk_interpolation(**param) 
+        ti('interp init')
+        print(slon)
+        interp.set_source(slon, slat, dic_var)
+        ti('interp set_source')
+        interp.set_target(tlon, tlat)
+        ti('interp set_destination')
+        interp.run()
+        ti('interp run')
+        interp_var = interp.get_output()
+        ti('interp get_output')
+
+        data = np.zeros(msg_shape)-1.
+        data[valid_mask] = interp_var[param['var']]
+        
+    ## Load cache file
+    else:
+        data = load_h5(**param)
+
+    print('### Compare results')
+    compare_with_real_msg(data, **param)
+    ti('comparison')
+
+    ti.show()
+
+
 def combine_param(param_dic):
     """
     Iterator returning a dict made of combination of all list values in input dict, using the same keys.
@@ -482,11 +550,13 @@ if __name__=='__main__':
         for k,v in param.items():
             print(k, ':', v)
         try:
-            interp = main(param)
+            #interp = main(param)
+            interp = main_vtk(param)
             pass
         except Exception as e:
             print('--- ERROR IN PROCESSING ---')
             print(traceback.format_exc())
             #logging.error(traceback.format_exc())
 
+        sys.exit()
         print('---------------')
