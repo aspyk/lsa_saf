@@ -359,8 +359,8 @@ def params_to_string(param, sep1='_', sep2='-'):
 
 def export_to_image(data, plot_param={}, **param):
     from textwrap import wrap
-    
-    if 1:
+
+    if 0:
         lat1 = 380
         lat2 = 480
         lon1 = 1950
@@ -381,6 +381,74 @@ def export_to_image(data, plot_param={}, **param):
     plt.savefig(im_name, dpi=200)
     print(f"--- Output image saved to: {im_name}")
 
+
+class Plots:
+
+    def __init__(self, zoom=False):
+        if zoom:
+            lat1 = 380
+            lat2 = 480
+            lon1 = 1950
+            lon2 = 2050
+        else:
+            lat1 = None
+            lat2 = None
+            lon1 = None
+            lon2 = None
+        self.lat = slice(lat1,lat2)
+        self.lon = slice(lon1,lon2)
+
+    def initialize(self):
+        plt.clf()
+        self.fig = plt.figure()
+        self.ax = self.fig.add_subplot(111)
+    
+    def imshow(self, data, plot_param={}, **param):
+        self.type = 'imshow'
+        self.initialize()
+
+        data = data[self.lat,self.lon]
+        ims = self.ax.imshow(data, **plot_param)
+        plt.tight_layout()
+        plt.colorbar(ims)
+        
+        self.finalize(**param)
+
+    def scatter(self, data1, data2, plot_param={}, **param):
+        self.type = 'scatter'
+        self.initialize()
+
+        data1 = data1[self.lat,self.lon]
+        data2 = data2[self.lat,self.lon]
+        al_max = 9000
+        counts, xedges, yedges, im = self.ax.hist2d(data1.ravel(), data2.ravel(), bins=[np.linspace(0, al_max, 200)]*2, **plot_param)
+        self.ax.plot([0,al_max], [0,al_max], c='k', lw=1)
+        #plt.tight_layout()
+        
+        self.ax.set_xlim(0,al_max)
+        self.ax.set_ylim(0,al_max)
+        self.ax.set_xlabel(param['s1'])
+        self.ax.set_ylabel(param['s2'])
+
+        plt.axis('square')
+
+        self.finalize(**param)
+
+    def finalize(self, **param):
+        from textwrap import wrap
+        param_str = '\n'.join(wrap(params_to_string(param, sep1=' | ', sep2=':'), 60))
+        self.ax.set_title(param_str, fontsize=10 )
+        #self.ax.set_title(params_to_string(param, sep1=' | ', sep2=':'), fontsize=9 )
+        
+        #self.fig.subplots_adjust(top=0.9)
+        plt.tight_layout()
+        
+        param_str = params_to_string(param)
+        im_name = f"res_proj2vtk_{self.type}_{params_to_string(param)}.png"
+        plt.savefig(im_name, dpi=200)
+        print(f"--- Output image saved to: {im_name}")
+    
+
 def export_to_h5(data, **param):
     h5_name = f"res_proj2vtk_output_{params_to_string(param)}.h5"
     with h5py.File(h5_name, 'w') as h5_file:
@@ -397,7 +465,17 @@ def load_h5(**param):
 def compare_with_real_msg(msg_interp, **param):
     date = param['date']
     var = param['var']
-    msg_ref_file = f'/cnrm/vegeo/juncud/NO_SAVE/aod-test-2/v1/HDF5_LSASAF_MSG_ALBEDO_MSG-Disk_{date}0000'
+    
+    ## MTAL (MTAL-R not available at this date)
+    if 1: 
+        msg_ref_file = f'/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/HDF5_LSASAF_MSG_ALBEDO-D10_MSG-Disk_{date}0000'
+        source_ref = 'RefMTAL'
+    
+    ## MDAL
+    else: 
+        msg_ref_file = f'/cnrm/vegeo/juncud/NO_SAVE/aod-test-2/v1/HDF5_LSASAF_MSG_ALBEDO_MSG-Disk_{date}0000'
+        source_ref = 'RefMDAL'
+    
     with h5py.File(msg_ref_file) as h5ref:
         msg_ref = h5ref[var][:]
 
@@ -414,15 +492,24 @@ def compare_with_real_msg(msg_interp, **param):
     
     albedo = {'cmap':'jet', 'vmin':0, 'vmax':6000}
     albedo_diff = {'cmap':'seismic', 'vmin':-2000, 'vmax':2000}
+    albedo_scatter = {'cmin':1, 'cmap':'jet'}
 
-    export_to_image(msg_interp,            plot_param=albedo,      **param,                              source='Vtk')
-    export_to_image(msg_ref,               plot_param=albedo,      var=param['var'], date=param['date'], source='Ref')
-    export_to_image(msg_daniel,            plot_param=albedo,      var=param['var'], date=param['date'], source='Daniel')
+    source_vtk = 'Vtk'
+    source_daniel = 'Daniel'
 
-    export_to_image(msg_ref-msg_interp,    plot_param=albedo_diff, **param,                              source='diffRefVtk')
-    export_to_image(msg_ref-msg_daniel,    plot_param=albedo_diff, var=param['var'], date=param['date'], source='diffRefDaniel')
-    export_to_image(msg_daniel-msg_interp, plot_param=albedo_diff, **param,                              source='diffDanielVtk')
+    p = Plots(zoom=0)
 
+    p.imshow(msg_interp,            plot_param=albedo,      **param,                              source=source_vtk)
+    p.imshow(msg_ref,               plot_param=albedo,      var=param['var'], date=param['date'], source=source_ref)
+    p.imshow(msg_daniel,            plot_param=albedo,      var=param['var'], date=param['date'], source=source_daniel)
+
+    p.imshow(msg_ref-msg_interp,    plot_param=albedo_diff, **param,                              source='diff'+source_ref+source_vtk)
+    p.imshow(msg_ref-msg_daniel,    plot_param=albedo_diff, var=param['var'], date=param['date'], source='diff'+source_ref+source_daniel)
+    p.imshow(msg_daniel-msg_interp, plot_param=albedo_diff, **param,                              source='diff'+source_daniel+source_vtk)
+
+    p.scatter(msg_ref, msg_interp,    plot_param=albedo_scatter, **param, s1=source_ref, s2=source_vtk)
+    p.scatter(msg_ref, msg_daniel,    plot_param=albedo_scatter, **param, s1=source_ref, s2=source_daniel)
+    p.scatter(msg_daniel, msg_interp, plot_param=albedo_scatter, **param, s1=source_daniel, s2=source_vtk)
 
 def main(param):
 
@@ -477,16 +564,15 @@ def main_vtk(param):
 
         print('### MSG extraction (target)')
         tlon, tlat, valid_mask, msg_shape = msg_to_vtk(stride=1, lonlat_only=True)
-        ti('MSG')
+        ti('read MSG')
         
         print('### ETAL extraction (source)')
-        slon, slat, dic_var = etal_to_vtk(stride=100, lonlat_only=True, **param)
-        ti('ETAL')
+        slon, slat, dic_var = etal_to_vtk(stride=1, lonlat_only=True, **param)
+        ti('read ETAL')
 
         print('### Interpolation')
         interp = vtk_interpolation(**param) 
         ti('interp init')
-        print(slon)
         interp.set_source(slon, slat, dic_var)
         ti('interp set_source')
         interp.set_target(tlon, tlat)
@@ -544,6 +630,8 @@ if __name__=='__main__':
             'date' : ['20201205','20201215','20201225'],
             'kernel' : ['mean','inverse_distance','gaussian'],
             'radius' : [3,5,10],
+            'null_points' : ['closest'],
+            #'null_points' : [-1.],
            }
 
     for param in combine_param(test):
@@ -558,5 +646,5 @@ if __name__=='__main__':
             print(traceback.format_exc())
             #logging.error(traceback.format_exc())
 
-        sys.exit()
+        #sys.exit()
         print('---------------')

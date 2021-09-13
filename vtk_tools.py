@@ -8,7 +8,7 @@ from tools import SimpleTimer
 
 
 class vtk_interpolation:
-    def __init__(self, kernel='mean', radius=1, null_points_strategy=-1, **param):
+    def __init__(self, kernel='mean', radius=1, null_points=-1, **param):
         """
         - radius: float in [km]
             Radius of the sphere where all the neighbor points are selected.
@@ -26,11 +26,15 @@ class vtk_interpolation:
         """
         self.kernel = kernel
         self.radius = radius
-        #if null_points_strategy=='closest':
-        #    self.null_points_strategy = null_points_strategy
-        #else:
-        #    try:
-        #        self.null_points_strategy = float(null_points_strategy)
+        print(null_points)
+        print(radius)
+        try:
+            self.null_points_strategy = float(null_points)
+        except:
+            if null_points=='closest':
+                self.null_points_strategy = null_points
+            else:
+                print("--- ERROR: wrong null_points_strategy parameter ('closest' or float)")
 
     def set_source(self, lon, lat, var={}, unit='deg', fname=None):
         if len(var.keys())==0:
@@ -117,11 +121,11 @@ class vtk_interpolation:
         interpolator.SetSourceData(self.source)
         interpolator.SetKernel(vtk_kernel)
         interpolator.SetLocator(locator)
-        if 1:
+        if self.null_points_strategy=='closest':
             interpolator.SetNullPointsStrategyToClosestPoint()
         else:
             interpolator.SetNullPointsStrategyToNullValue()
-            interpolator.SetNullValue(-1.)
+            interpolator.SetNullValue(self.null_points_strategy)
     
         ## Run the interpolation
         interpolator.Update()
