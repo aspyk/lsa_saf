@@ -224,20 +224,7 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
 
     t0('h5_slice')
 
-    ## Create lonlat coords for etal sinusoidal projection
-    lon = np.linspace(-180, 180, etal_shape[1])
-    lat = np.linspace(90, -90, etal_shape[0])
-
-    t0('lon_lat')
-
-    lat = lat[iLatStartEps:iLatEndEps:stride]
-    lon = lon[iLonStartEps:iLonEndEps:stride]
-
-    t0('lon_lat_slice')
-
-    lon, lat = np.meshgrid(lon,lat)
-    lon = lon/np.cos(np.deg2rad(lat))
-
+    ## Filter #1: discard non valid etal
     ## Version without np.where is a bit quicker, you can test it with the following if:
     if 1:
         mask_nonvalid = etal!=-1. # Discard points without valid albedo value (outside projection and in the ocean)
@@ -245,16 +232,37 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
     else:
         mask_nonvalid = np.where(etal!=-1.) # Discard points without valid albedo value (outside projection and in the ocean)
         t0('mask_where')
-    s0 = lon.size
-    lon = lon[mask_nonvalid] 
-    lat = lat[mask_nonvalid]
+
+    print(mask_nonvalid.shape)
+    s0 = etal.size
     etal = etal[mask_nonvalid]
-    s1= lon.size
+    s1= etal.size
     print("--- {:.2f} % data masked".format(100*(s0-s1)/s0))
+    
+    t0('mask_nonvalid_etal')
+    
+    ## Get lonlat from file (quicker than creating them manually when no downsampling is used)
+    if 1:
+        metop_lonlat_file = '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
+        with h5py.File(metop_lonlat_file, 'r') as flonlat:
+            lon = flonlat['lon'][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride][mask_nonvalid]
+            lat = flonlat['lat'][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride][mask_nonvalid]
+    
+    ## Create lonlat coords manually for etal sinusoidal projection
+    else:
+        lon = np.linspace(-180, 180, etal_shape[1])[iLonStartEps:iLonEndEps:stride]
+        lat = np.linspace(90, -90, etal_shape[0])[iLatStartEps:iLatEndEps:stride]
+
+        lon, lat = np.meshgrid(lon,lat)
+        lon = lon/np.cos(np.deg2rad(lat))
+
+        lon = lon[mask_nonvalid] 
+        lat = lat[mask_nonvalid]
+    
     print('min/max lat:', lat.min(), lat.max())
     print('min/max lon:', lon.min(), lon.max())
 
-    t0('mask_nonvalid')
+    t0('mask_nonvalid_lonlat')
 
     mask_fov = np.logical_and(np.abs(lon)<81, np.abs(lat)<81)  
     lon = lon[mask_fov] 
@@ -356,30 +364,6 @@ def params_to_string(param, sep1='_', sep2='-'):
     delchars = ''.join(c for c in map(chr, range(256)) if not c.isalnum())
     param_str = sep1.join([f"{k}{sep2}{str(v).translate(str.maketrans('','',delchars))}" for k,v in param.items()])
     return param_str
-
-def export_to_image(data, plot_param={}, **param):
-    from textwrap import wrap
-
-    if 0:
-        lat1 = 380
-        lat2 = 480
-        lon1 = 1950
-        lon2 = 2050
-        data = data[lat1:lat2,lon1:lon2]
-
-    plt.clf()
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ims = ax.imshow(data, **plot_param)
-    plt.tight_layout()
-    plt.colorbar(ims)
-    param_str = '\n'.join(wrap(params_to_string(param, sep1=' | ', sep2=':'), 60))
-    ax.set_title(params_to_string(param, sep1=' | ', sep2=':'), fontsize=10 )
-    fig.subplots_adjust(top=0.9)
-    param_str = params_to_string(param)
-    im_name = f"res_proj2vtk_output_{params_to_string(param)}.png"
-    plt.savefig(im_name, dpi=200)
-    print(f"--- Output image saved to: {im_name}")
 
 
 class Plots:
@@ -628,7 +612,9 @@ if __name__=='__main__':
     test = {
             'var' : ['AL-BB-BH'],
             'date' : ['20201205','20201215','20201225'],
-            'kernel' : ['mean','inverse_distance','gaussian'],
+            'kernel' : ['inverse_distance','gaussian'],
+            #'kernel' : ['mean','inverse_distance','gaussian'],
+            #'radius' : [5,10],
             'radius' : [3,5,10],
             'null_points' : ['closest'],
             #'null_points' : [-1.],
@@ -646,5 +632,5 @@ if __name__=='__main__':
             print(traceback.format_exc())
             #logging.error(traceback.format_exc())
 
-        #sys.exit()
+        sys.exit()
         print('---------------')
