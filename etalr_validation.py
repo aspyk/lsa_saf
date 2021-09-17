@@ -18,16 +18,16 @@ from vtk_tools import vtk_interpolation
 import pandas as pd
 import pathlib
 
-def lonlat_to_xyz(lon, lat, R=1.0, unit='rad'):
-    if unit=='deg':
-        lon = np.deg2rad(lon)
-        lat = np.deg2rad(lat)
-    x = R * np.cos(lat) * np.cos(lon)
-    y = R * np.cos(lat) * np.sin(lon)
-    z = R * np.sin(lat)
-    return x,y,z
 
-def msg_to_vtk(stride=10, lonlat_only=False, **param):
+
+"""
+TODO
+----
+- make a class SatelliteData with .lon, .lat and .var attribute. And after a MSG() and EPS() subclass.
+"""
+
+
+def load_msg_lonlat(stride=10, **param):
     msg_lat_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision'
     msg_lon_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision'
     #'hdf5_lsasaf_msg_lat_msg-disk_4bytesprecision'
@@ -66,32 +66,15 @@ def msg_to_vtk(stride=10, lonlat_only=False, **param):
         print('min/max lat:', lat.min(), lat.max())
         print('min/max lon:', lon.min(), lon.max())
 
-    if lonlat_only:
-        return lon, lat, valid_mask, out_shape
+    return lon, lat, valid_mask, out_shape
 
-    lat = np.deg2rad(lat)
-    lon = np.deg2rad(lon)
 
-    x,y,z = lonlat_to_xyz(lon, lat, unit='rad')
-
-    print(x.shape)
-
-    msg_grid = array_to_vtk_scatter(x, y, z, fname='res_msg')
-    return msg_grid, valid_mask, out_shape
-
-def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
+def load_etal_lonlat_var(etal_file, stride=100, var=None, date=None, **param):
 
     t0 = SimpleTimer()
 
-    if date is None:
-        date_ = '2020-DEC-05' 
-        dateObj = dt.datetime.strptime(date_, '%Y-%b-%d')
-        dateForFile = dt.datetime.strftime(dateObj, '%Y%m%d')
-    else:
-        dateForFile = date
-    
     # already discarding part of ETAL data that is for sure not in the MSG disk
-    if 1: 
+    if 1:
         iLatStartEps = 850
         iLatEndEps   = 17150 
         iLonStartEps = 9000 
@@ -106,18 +89,16 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
         iLonStartEps = 18900 
         iLonEndEps   = 19900 
     
-    etal_file = f'/cnrm/vegeo/juncud/NO_SAVE/ETAL/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_{dateForFile}0000'
-    #etal_file = '/cnrm/vegeo/juncud/NO_SAVE/ETAL/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012050000'
 
     print(f'--- Read {etal_file}...')
     with h5py.File(etal_file,'r') as h5f:
         etal_shape  = h5f[var].shape
-        etal  = h5f[var][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride]
+        etal = h5f[var][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride]
     #etal = h5py.File('.\\input_data\\HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000', 'r')[var]
 
     ## Debug: set checkerboard
     if 0:
-        etal  = 6000*(np.indices(etal.shape).sum(axis=0) % 2)
+        etal = 6000*(np.indices(etal.shape).sum(axis=0) % 2)
         print(etal)
 
     ## Debug: plot input etal to image
@@ -127,20 +108,7 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
 
     t0('h5_slice')
 
-    ## Create lonlat coords for etal sinusoidal projection
-    lon = np.linspace(-180, 180, etal_shape[1])
-    lat = np.linspace(90, -90, etal_shape[0])
-
-    t0('lon_lat')
-
-    lat = lat[iLatStartEps:iLatEndEps:stride]
-    lon = lon[iLonStartEps:iLonEndEps:stride]
-
-    t0('lon_lat_slice')
-
-    lon, lat = np.meshgrid(lon,lat)
-    lon = lon/np.cos(np.deg2rad(lat))
-
+    ## Filter #1: discard non valid etal
     ## Version without np.where is a bit quicker, you can test it with the following if:
     if 1:
         mask_nonvalid = etal!=-1. # Discard points without valid albedo value (outside projection and in the ocean)
@@ -148,16 +116,37 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
     else:
         mask_nonvalid = np.where(etal!=-1.) # Discard points without valid albedo value (outside projection and in the ocean)
         t0('mask_where')
-    s0 = lon.size
-    lon = lon[mask_nonvalid] 
-    lat = lat[mask_nonvalid]
+
+    print(mask_nonvalid.shape)
+    s0 = etal.size
     etal = etal[mask_nonvalid]
-    s1= lon.size
+    s1= etal.size
     print("--- {:.2f} % data masked".format(100*(s0-s1)/s0))
+    
+    t0('mask_nonvalid_etal')
+    
+    ## Get lonlat from file (quicker than creating them manually when no downsampling is used)
+    if 1:
+        metop_lonlat_file = '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
+        with h5py.File(metop_lonlat_file, 'r') as flonlat:
+            lon = flonlat['lon'][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride][mask_nonvalid]
+            lat = flonlat['lat'][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride][mask_nonvalid]
+    
+    ## Create lonlat coords manually for etal sinusoidal projection
+    else:
+        lon = np.linspace(-180, 180, etal_shape[1])[iLonStartEps:iLonEndEps:stride]
+        lat = np.linspace(90, -90, etal_shape[0])[iLatStartEps:iLatEndEps:stride]
+
+        lon, lat = np.meshgrid(lon,lat)
+        lon = lon/np.cos(np.deg2rad(lat))
+
+        lon = lon[mask_nonvalid] 
+        lat = lat[mask_nonvalid]
+    
     print('min/max lat:', lat.min(), lat.max())
     print('min/max lon:', lon.min(), lon.max())
 
-    t0('mask_nonvalid')
+    t0('mask_nonvalid_lonlat')
 
     mask_fov = np.logical_and(np.abs(lon)<81, np.abs(lat)<81)  
     lon = lon[mask_fov] 
@@ -172,22 +161,10 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
 
     dic_var = {var:etal}
 
-    if lonlat_only:
-        return lon, lat, dic_var
-
-    x,y,z = lonlat_to_xyz(lon, lat, unit='deg')
-
-    t0('to_xyz')
-
-    print(x.shape)
-
-    etal_grid = array_to_vtk_scatter(x, y, z, dic_var, fname='res_etal')
-    
-    t0('to_vtk')
-
     t0.show()
 
-    return etal_grid
+    return lon, lat, dic_var
+
 
 def param_to_string(param, sep1='_', sep2='-'):
     """
@@ -200,30 +177,6 @@ def param_to_string(param, sep1='_', sep2='-'):
     delchars = ''.join(c for c in map(chr, range(256)) if not c.isalnum())
     param_str = sep1.join([f"{k}{sep2}{str(v).translate(str.maketrans('','',delchars))}" for k,v in param.items()])
     return param_str
-
-def export_to_image(data, plot_param={}, **param):
-    from textwrap import wrap
-
-    if 0:
-        lat1 = 380
-        lat2 = 480
-        lon1 = 1950
-        lon2 = 2050
-        data = data[lat1:lat2,lon1:lon2]
-
-    plt.clf()
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ims = ax.imshow(data, **plot_param)
-    plt.tight_layout()
-    plt.colorbar(ims)
-    param_str = '\n'.join(wrap(params_to_string(param, sep1=' | ', sep2=':'), 60))
-    ax.set_title(params_to_string(param, sep1=' | ', sep2=':'), fontsize=10 )
-    fig.subplots_adjust(top=0.9)
-    param_str = params_to_string(param)
-    im_name = f"res_proj2vtk_output_{params_to_string(param)}.png"
-    plt.savefig(im_name, dpi=200)
-    print(f"--- Output image saved to: {im_name}")
 
 
 class Plots:
@@ -280,33 +233,40 @@ class Plots:
 
     def finalize(self, **param):
         from textwrap import wrap
-        param_str = '\n'.join(wrap(params_to_string(param, sep1=' | ', sep2=':'), 60))
+        param_str = '\n'.join(wrap(param_to_string(param, sep1=' | ', sep2=':'), 60))
         self.ax.set_title(param_str, fontsize=10 )
-        #self.ax.set_title(params_to_string(param, sep1=' | ', sep2=':'), fontsize=9 )
+        #self.ax.set_title(param_to_string(param, sep1=' | ', sep2=':'), fontsize=9 )
         
         #self.fig.subplots_adjust(top=0.9)
         plt.tight_layout()
         
-        param_str = params_to_string(param)
-        im_name = f"res_proj2vtk_{self.type}_{params_to_string(param)}.png"
+        param_str = param_to_string(param)
+        im_name = f"res_proj2vtk_{self.type}_{param_to_string(param)}.png"
         plt.savefig(im_name, dpi=200)
         print(f"--- Output image saved to: {im_name}")
     
 
 def export_to_h5(data, **param):
-    h5_name = f"res_proj2vtk_output_{params_to_string(param)}.h5"
+    h5_name = f"res_proj2vtk_output_{param_to_string(param)}.h5"
     with h5py.File(h5_name, 'w') as h5_file:
         h5_file[param['var']] = data
     print(f"--- Output h5 saved to: {h5_name}")
 
 def load_h5(**param):
-    h5_name = f"res_proj2vtk_output_{params_to_string(param)}.h5"
-    with h5py.File(h5_name, 'r') as h5_file:
-        data = h5_file[param['var']][:]
-    print(f"--- Read h5 from: {h5_name}")
-    return data
-
-   
+    h5_name = pathlib.Path(f"res_proj2vtk_output_{param_to_string(param)}.h5")
+    if h5_name.is_file():
+        with h5py.File(h5_name, 'r') as h5_file:
+            data = h5_file[param['var']][:]
+        print(f"--- Read h5 from: {h5_name}")
+        return data
+    else:
+        print(f"--- File: {h5_name} not found.")
+        return None
+        
+def compare_with_real_msg(msg_interp, **param):
+    date = param['date']
+    var = param['var']
+    
     ## MTAL (MTAL-R not available at this date)
     if 1: 
         msg_ref_file = f'/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/HDF5_LSASAF_MSG_ALBEDO-D10_MSG-Disk_{date}0000'
@@ -353,7 +313,6 @@ def load_h5(**param):
     p.scatter(msg_daniel, msg_interp, plot_param=albedo_scatter, **param, s1=source_daniel, s2=source_vtk)
 
 def get_time_range(start, end, days=[], **param):
-
     dseries = pd.date_range(start, end, freq='D')
     
     if len(days)>0:
@@ -362,6 +321,48 @@ def get_time_range(start, end, days=[], **param):
         dseries = dseries[[d in days for d in dseries.day]]
 
     return dseries
+
+def interpolate_etal_to_msg(etal_file, **param):
+        ti = SimpleTimer()
+
+        print('### MSG  extraction (target)')
+        msg_lon, msg_lat, msg_valid_mask, msg_shape = load_msg_lonlat(stride=1)
+        ti('read MSG')
+        
+        print('### ETAL extraction (source)')
+        etal_lon, etal_lat, etal_dic_var = load_etal_lonlat_var(etal_file, stride=100, **param)
+        ti('read ETAL')
+
+        print('### Interpolation')
+        interp = vtk_interpolation(**param) 
+        ti('interp init')
+        interp.set_source(etal_lon, etal_lat, etal_dic_var)
+        ti('interp set_source')
+        interp.set_target(msg_lon, msg_lat)
+        ti('interp set_destination')
+        interp.run()
+        ti('interp run')
+        interp_var = interp.get_output()
+        ti('interp get_output')
+
+        data = np.zeros(msg_shape)-1.
+        data[msg_valid_mask] = interp_var[param['var']]
+        
+        export_to_h5(data, **param)
+        
+        return data
+
+def get_etal_on_msg(etal_path, **param):
+    """If cache file exists, load it, otherwise interpolate"""
+    for k,v in param.items():
+        print(f'{k}:{v}')
+    
+    data = load_h5(**param)
+    if data is not None:
+        return data
+
+    else:
+        return interpolate_etal_to_msg(etal_path, **param)
 
 def process_etal_series(**param):
 
@@ -401,8 +402,33 @@ def process_etal_series(**param):
             print(f'{file_date} NOT IN dataframe')
 
     print(df)
+
+    ## Get ETAL on MSG grid 
+    interp_param = {
+            'var' : 'AL-BB-BH',
+            'date' : '20201205',
+            'kernel' : 'inverse_distance',
+            #'kernel' : ['mean','inverse_distance','gaussian'],
+            #'radius' : [5,10],
+            'radius' : 5,
+            'null_points' : 'closest',
+            #'null_points' : -1.,
+           }
+
+    albedo = {'cmap':'jet', 'vmin':0, 'vmax':6000}
+    source_vtk = 'Vtk'
+    p = Plots(zoom=0)
+    for index,row in df.iterrows():
+        if row['etal_path'] is None:
+            continue
+        interp_param['date'] = index.strftime('%Y%m%d')
+        etal_on_msg = get_etal_on_msg(row['etal_path'], **interp_param)
+        print(index, etal_on_msg.min(), etal_on_msg.mean(), etal_on_msg.max())
+
+        p.imshow(etal_on_msg, plot_param=albedo, **interp_param, source=source_vtk)
+
     
-        ## Init empty data containers to store results
+    ## Init empty data containers to store results
     # temporal domain (10x10 km area)
     # spatial domain (global bias map)
 
