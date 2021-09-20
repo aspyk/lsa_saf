@@ -174,6 +174,11 @@ def param_to_string(param, sep1='_', sep2='-'):
     Separators are use like this:
     {p1:v1, p2:v2} -> p1<sep2>v1<sep1>p2<sep2>v2
     """
+    ## Remove some unwanted parameters if any
+    if 'string_exclude' in param.keys():
+        for k in param['string_exclude']:
+            param.pop(k, None)
+    param.pop('string_exclude', None)
     delchars = ''.join(c for c in map(chr, range(256)) if not c.isalnum())
     param_str = sep1.join([f"{k}{sep2}{str(v).translate(str.maketrans('','',delchars))}" for k,v in param.items()])
     return param_str
@@ -252,15 +257,17 @@ def export_to_h5(data, **param):
         h5_file[param['var']] = data
     print(f"--- Output h5 saved to: {h5_name}")
 
-def load_h5(**param):
-    h5_name = pathlib.Path(f"res_proj2vtk_output_{param_to_string(param)}.h5")
-    if h5_name.is_file():
-        with h5py.File(h5_name, 'r') as h5_file:
-            data = h5_file[param['var']][:]
-        print(f"--- Read h5 from: {h5_name}")
+def load_h5_var(h5_path, var, slicing=None):
+    if h5_path.is_file():
+        with h5py.File(h5_path, 'r') as h5_file:
+            if slicing is None:
+                data = h5_file[var][:]
+            else:
+                data = h5_file[var][slicing]
+        print(f"--- Read h5 from: {h5_path}")
         return data
     else:
-        print(f"--- File: {h5_name} not found.")
+        print(f"--- File: {h5_path} not found.")
         return None
         
 def compare_with_real_msg(msg_interp, **param):
@@ -330,7 +337,7 @@ def interpolate_etal_to_msg(etal_file, **param):
         ti('read MSG')
         
         print('### ETAL extraction (source)')
-        etal_lon, etal_lat, etal_dic_var = load_etal_lonlat_var(etal_file, stride=100, **param)
+        etal_lon, etal_lat, etal_dic_var = load_etal_lonlat_var(etal_file, stride=1, **param)
         ti('read ETAL')
 
         print('### Interpolation')
@@ -352,17 +359,23 @@ def interpolate_etal_to_msg(etal_file, **param):
         
         return data
 
-def get_etal_on_msg(etal_path, **param):
+def get_etal_on_msg(etal_path, slicing=None, **param):
     """If cache file exists, load it, otherwise interpolate"""
     for k,v in param.items():
         print(f'{k}:{v}')
     
-    data = load_h5(**param)
+    ## Cache files are  stored in working directory for now
+    h5_path = pathlib.Path(f"res_proj2vtk_output_{param_to_string(param)}.h5")
+    data = load_h5_var(h5_path, param['var'], slicing)
     if data is not None:
         return data
 
     else:
         return interpolate_etal_to_msg(etal_path, **param)
+
+def load_mtalr(mtalr_path, slicing=None, **param):
+    return load_h5_var(mtalr_path, param['var'], slicing)
+
 
 def process_etal_series(**param):
 
@@ -415,17 +428,55 @@ def process_etal_series(**param):
             #'null_points' : -1.,
            }
 
+    ## Data accumulation
+
+    ## DEBUG: subsampling
+    if 1:
+        slicing = (slice(None, None, 4), slice(None, None, 4))
+        interp_param['slicing'] = slicing
+        interp_param['string_exclude'] = ['slicing']
+
+    with h5py.File('hdf5_lsasaf_usgs-igbp_lwmask_msg-disk', 'r') as flwmask:
+        try:
+            lwmask = flwmask['LWMASK'][slicing]
+        except:
+            lwmask = flwmask['LWMASK'][:]
+
+    nonvalid_mask = np.where(lwmask!=1)
+    res_bias = np.zeros_like(lwmask, dtype=np.float)
+    nbias = 0
+
+
+    ## Plot params
     albedo = {'cmap':'jet', 'vmin':0, 'vmax':6000}
-    source_vtk = 'Vtk'
+    albedo_diff = {'cmap':'seismic', 'vmin':-2000, 'vmax':2000}
+    source_vtk = 'VtkETAL'
+    source_ref = 'RefMTALR'
     p = Plots(zoom=0)
     for index,row in df.iterrows():
-        if row['etal_path'] is None:
+        if (row['etal_path'] is None) or (row['mtalr_path'] is None):
             continue
+
         interp_param['date'] = index.strftime('%Y%m%d')
         etal_on_msg = get_etal_on_msg(row['etal_path'], **interp_param)
-        print(index, etal_on_msg.min(), etal_on_msg.mean(), etal_on_msg.max())
+        mtalr_on_msg = load_mtalr(row['mtalr_path'],  **interp_param)
+        mtalr_on_msg[nonvalid_mask] = -1
+        bias = mtalr_on_msg-etal_on_msg
+        res_bias += bias
+        nbias += 1
+        print(pd.DataFrame(etal_on_msg.ravel()).describe().applymap('{:.2f}'.format))
+        #print(pd.DataFrame(mtalr_on_msg.ravel()).describe().applymap('{:.2f}'.format))
 
         p.imshow(etal_on_msg, plot_param=albedo, **interp_param, source=source_vtk)
+        p.imshow(mtalr_on_msg, plot_param=albedo, var=interp_param['var'], date=interp_param['date'], source=source_ref)
+        p.imshow(bias, plot_param=albedo_diff, **interp_param, source='diff'+source_ref+source_vtk)
+
+    res_bias /= nbias
+    param2 = {k:v for k,v in interp_param.items()}
+    param2.pop('date', None)
+    param2['start'] = param['start']
+    param2['end'] = param['end']
+    p.imshow(res_bias, plot_param=albedo_diff, **param2, source='diff'+source_ref+source_vtk)
 
     
     ## Init empty data containers to store results
@@ -526,7 +577,7 @@ if __name__=='__main__':
     test = {
             'var' : ['AL-BB-BH'],
             'start' : ['2015-01-05'],
-            'end' : ['2015-02-25'],
+            'end' : ['2015-12-25'],
             'size' : [10],
            }
 
