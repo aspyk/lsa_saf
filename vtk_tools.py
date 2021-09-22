@@ -1,10 +1,8 @@
-#import h5py
 import numpy as np
 import vtk
 from vtk.util import numpy_support as ns
 
 import os,sys
-from tools import SimpleTimer
 
 
 class vtk_interpolation:
@@ -63,12 +61,11 @@ class vtk_interpolation:
     
         np_pts = np.array((x,y,z)).T
     
-        t1 = SimpleTimer()
         #vtk_pts = self.numpy_to_vtkpoints(np_pts) 
         vtk_pts = vtk.vtkPoints()
         vtk_pts.SetData(ns.numpy_to_vtk(np_pts, deep=True))
     
-        # Create vtk point data
+        ## Create vtk point data
         vars = []
         if dic_var is not None:
             for vname, vdata in dic_var.items():
@@ -76,7 +73,7 @@ class vtk_interpolation:
                 vars[-1].SetNumberOfComponents(1)
                 vars[-1].SetName(vname)
     
-        # Merge everything into a vtkUnstructuredGrid
+        ## Merge everything into a vtkUnstructuredGrid
         grid = vtk.vtkUnstructuredGrid()
         grid.SetPoints(vtk_pts)
         for var in vars:
