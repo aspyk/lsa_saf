@@ -203,7 +203,7 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
         iLonStartEps = 18900 
         iLonEndEps   = 19900 
     
-    etal_file = f'/cnrm/vegeo/juncud/NO_SAVE/ETAL/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_{dateForFile}0000'
+    etal_file = f'/cnrm/vegeo/juncud/NO_SAVE/ETAL/2020/12/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_{dateForFile}0000'
     #etal_file = '/cnrm/vegeo/juncud/NO_SAVE/ETAL/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012050000'
 
     print(f'--- Read {etal_file}...')
@@ -465,7 +465,7 @@ def compare_with_real_msg(msg_interp, **param):
 
     msg_daniel_file = f'/cnrm/vegeo/juncud/scripts/eps_geos_{date}0000'
     with h5py.File(msg_daniel_file) as h5ref:
-        msg_daniel = 1e4*h5ref[var][:]
+        msg_daniel = h5ref[var][:]
 
     with h5py.File('hdf5_lsasaf_usgs-igbp_lwmask_msg-disk', 'r') as flwmask:
         lwmask = flwmask['LWMASK'][:]
@@ -481,7 +481,7 @@ def compare_with_real_msg(msg_interp, **param):
     source_vtk = 'Vtk'
     source_daniel = 'Daniel'
 
-    p = Plots(zoom=0)
+    p = Plots(zoom=1)
 
     p.imshow(msg_interp,            plot_param=albedo,      **param,                              source=source_vtk)
     p.imshow(msg_ref,               plot_param=albedo,      var=param['var'], date=param['date'], source=source_ref)
@@ -611,9 +611,11 @@ if __name__=='__main__':
     
     test = {
             'var' : ['AL-BB-BH'],
-            'date' : ['20201205','20201215','20201225'],
-            'kernel' : ['inverse_distance','gaussian'],
+            #'date' : ['20201205','20201215','20201225'],
+            'date' : ['20201225'],
+            #'kernel' : ['inverse_distance','gaussian'],
             #'kernel' : ['mean','inverse_distance','gaussian'],
+            'kernel' : ['mean','inverse_distance'],
             #'radius' : [5,10],
             'radius' : [3,5,10],
             'null_points' : ['closest'],
@@ -632,5 +634,5 @@ if __name__=='__main__':
             print(traceback.format_exc())
             #logging.error(traceback.format_exc())
 
-        sys.exit()
+        #sys.exit()
         print('---------------')
