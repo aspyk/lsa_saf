@@ -201,7 +201,6 @@ class Plots:
         self.lon = slice(lon1,lon2)
 
     def initialize(self):
-        plt.clf()
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111)
     
@@ -212,7 +211,7 @@ class Plots:
         data = data[self.lat,self.lon]
         ims = self.ax.imshow(data, **plot_param)
         plt.tight_layout()
-        plt.colorbar(ims)
+        cb = plt.colorbar(ims)
         
         self.finalize(**param)
 
@@ -240,16 +239,25 @@ class Plots:
         from textwrap import wrap
         param_str = '\n'.join(wrap(param_to_string(param, sep1=' | ', sep2=':'), 60))
         self.ax.set_title(param_str, fontsize=10 )
-        #self.ax.set_title(param_to_string(param, sep1=' | ', sep2=':'), fontsize=9 )
-        
-        #self.fig.subplots_adjust(top=0.9)
-        plt.tight_layout()
         
         param_str = param_to_string(param)
         im_name = f"res_proj2vtk_{self.type}_{param_to_string(param)}.png"
-        plt.savefig(im_name, dpi=200)
+        #plt.savefig(im_name, dpi=200)
+        self.save_no_whitespace(im_name)
         print(f"--- Output image saved to: {im_name}")
-    
+        plt.close(self.fig)
+   
+    def save_no_whitespace(self, filepath):
+        '''Save the current image with no whitespace'''
+        plt.subplots_adjust(0,0,1,1,0,0)
+        if len(self.fig.axes)==2:
+            plt.delaxes(self.fig.axes[1]) # axes[0] correspond to the main plot.
+        self.ax.set_title("")
+        self.ax.axis('off')
+        self.ax.margins(0,0)
+        self.ax.xaxis.set_major_locator(plt.NullLocator())
+        self.ax.yaxis.set_major_locator(plt.NullLocator())
+        self.fig.savefig(filepath, pad_inches=0, bbox_inches='tight')
 
 def export_to_h5(data, **param):
     h5_name = f"res_proj2vtk_output_{param_to_string(param)}.h5"
@@ -431,8 +439,10 @@ def process_etal_series(**param):
     ## Data accumulation
 
     ## DEBUG: subsampling
-    if 1:
+    if 0:
         slicing = (slice(None, None, 4), slice(None, None, 4))
+        #slicing = (slice(380, 480), slice(1950, 2050)) # France
+        #slicing = (slice(380, 480), slice(1950, 2050)) # France
         interp_param['slicing'] = slicing
         interp_param['string_exclude'] = ['slicing']
 
@@ -453,6 +463,29 @@ def process_etal_series(**param):
     source_vtk = 'VtkETAL'
     source_ref = 'RefMTALR'
     p = Plots(zoom=0)
+
+    # Recursive plot
+    #recfig = plt.figure()
+    #recax1 = recfig.add_subplot(211)
+    #recax2 = recfig.add_subplot(212)
+    recfig, (recax1, recax2) = plt.subplots(2, 1, sharex=True)
+
+    recax1.axhline(20.0, ls='--', c='r')
+    recax1.axhline(10.0, ls='--', c='y')
+    recax1.axhline(5.0, ls='--', c='g')
+    recax1.axhline(0.0, ls='-', c='k')
+    recax1.axhline(-5.0, ls='--', c='g')
+    recax1.axhline(-10.0, ls='--', c='y')
+    recax1.axhline(-20.0, ls='--', c='r')
+    
+    recax2.axhline(0.015, ls='--', c='r')
+    recax2.axhline(0.0, ls='-', c='k')
+    recax2.axhline(-0.015, ls='--', c='r')
+
+    means = [[],[]]
+    stds = [[],[]]
+    dates = []
+
     for index,row in df.iterrows():
         if (row['etal_path'] is None) or (row['mtalr_path'] is None):
             continue
@@ -460,17 +493,83 @@ def process_etal_series(**param):
         interp_param['date'] = index.strftime('%Y%m%d')
         etal_on_msg = get_etal_on_msg(row['etal_path'], **interp_param)
         mtalr_on_msg = load_mtalr(row['mtalr_path'],  **interp_param)
+        
+        # Filtering
         mtalr_on_msg[nonvalid_mask] = -1
+        mtalr_on_msg[etal_on_msg==-1] = -1
+        etal_on_msg[mtalr_on_msg==-1] = -1
+        mtalr_on_msg = mtalr_on_msg*0.0001
+        etal_on_msg = etal_on_msg*0.0001
+
+        print('mtalr:',np.count_nonzero(mtalr_on_msg<0), 'etal:', np.count_nonzero(etal_on_msg<0))
+
+        # Compute bias
         bias = mtalr_on_msg-etal_on_msg
         res_bias += bias
         nbias += 1
-        print(pd.DataFrame(etal_on_msg.ravel()).describe().applymap('{:.2f}'.format))
-        #print(pd.DataFrame(mtalr_on_msg.ravel()).describe().applymap('{:.2f}'.format))
+        print_stats(mtalr_on_msg, etal_on_msg, label=['mtalr', 'etal'])
 
-        p.imshow(etal_on_msg, plot_param=albedo, **interp_param, source=source_vtk)
-        p.imshow(mtalr_on_msg, plot_param=albedo, var=interp_param['var'], date=interp_param['date'], source=source_ref)
-        p.imshow(bias, plot_param=albedo_diff, **interp_param, source='diff'+source_ref+source_vtk)
+        if 0:
+            p.imshow(etal_on_msg, plot_param=albedo, **interp_param, source=source_vtk)
+            p.imshow(mtalr_on_msg, plot_param=albedo, var=interp_param['var'], date=interp_param['date'], source=source_ref)
+            p.imshow(bias, plot_param=albedo_diff, **interp_param, source='diff'+source_ref+source_vtk)
 
+        # Fill recursive plot
+        #recax.violinplot([bias.ravel()], positions=[nbias], showmeans=False, showmedians=True, showextrema=True, widths=0.9)
+        
+        mask_015 = mtalr_on_msg.ravel()>0.15
+        bias_above = 100*bias.ravel()[mask_015]/mtalr_on_msg.ravel()[mask_015]
+        bias_below = bias.ravel()[~mask_015]
+
+        print_stats(bias_above, bias_below, label=['bias_above_0.15', 'bias_below_0.15'], fmt='{:.3f}')
+
+        means[0].append(bias_above.mean())
+        means[1].append(bias_below.mean())
+        stds[0].append(bias_above.std())
+        stds[1].append(bias_below.std())
+        dates.append(index.strftime('%Y-%m-%d'))
+
+        #recax1.boxplot([bias_above], positions=[nbias], labels=[index.strftime('%Y-%m-%d')], widths=0.75, whis='range')
+        #recax2.boxplot([bias_below], positions=[nbias], labels=[index.strftime('%Y-%m-%d')], widths=0.75, whis='range')
+        
+        recax1.vlines(nbias-1, means[0][-1]-stds[0][-1], means[0][-1]+stds[0][-1])
+        recax2.vlines(nbias-1, means[1][-1]-stds[1][-1], means[1][-1]+stds[1][-1])
+        
+        #x = np.random.normal(nbias, 0.04, size=len(bias.ravel()))
+        #recax.scatter(x, bias.ravel(), alpha=0.2)
+
+        if (nbias == 4) and 0:
+            recax1.plot(means[0], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
+            recax2.plot(means[1], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
+
+            recax1.set_ylabel('Relative bias(%)')
+            recax2.set_ylabel('MBE and std')
+
+            recax1.set_xticks(range(nbias))
+            recax1.set_xticklabels(dates)
+            recax1.xaxis.set_tick_params(rotation=30)
+            recax2.set_xticks(range(nbias))
+            recax2.set_xticklabels(dates)
+            recax2.xaxis.set_tick_params(rotation=30)
+            plt.tight_layout() 
+            plt.show()
+            sys.exit()
+
+    recax1.plot(means[0], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
+    recax2.plot(means[1], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
+
+    recax1.set_ylabel('Relative bias(%)')
+    recax2.set_ylabel('MBE and std')
+    recax1.set_xticks(range(nbias))
+    recax1.set_xticklabels(dates)
+    recax1.xaxis.set_tick_params(rotation=90)
+    recax2.set_xticks(range(nbias))
+    recax2.set_xticklabels(dates)
+    recax2.xaxis.set_tick_params(rotation=90)
+    plt.tight_layout() 
+    plt.show()
+    sys.exit()
+    
     res_bias /= nbias
     param2 = {k:v for k,v in interp_param.items()}
     param2.pop('date', None)
@@ -482,6 +581,17 @@ def process_etal_series(**param):
     ## Init empty data containers to store results
     # temporal domain (10x10 km area)
     # spatial domain (global bias map)
+
+def print_stats(*arrays, label=None, fmt='{:.2f}'):
+    res = []
+    for ida,a in enumerate(arrays):
+        if label is None:
+            new = str(ida)
+        else:
+            new = label[ida]
+        res.append(pd.DataFrame(a.ravel()).describe().applymap(fmt.format).rename(columns={0:new}))
+    res = pd.concat(res, axis=1)
+    print(res)
 
 def main(param):
 
