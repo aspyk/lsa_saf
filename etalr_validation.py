@@ -27,6 +27,8 @@ TODO
 """
 
 
+
+
 def load_msg_lonlat(stride=10, **param):
     msg_lat_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision'
     msg_lon_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision'
@@ -89,12 +91,13 @@ def load_etal_lonlat_var(etal_file, stride=100, var=None, date=None, **param):
         iLonStartEps = 18900 
         iLonEndEps   = 19900 
     
+    lat_slice = slice(iLatStartEps, iLatEndEps, stride)
+    lon_slice = slice(iLonStartEps, iLonEndEps, stride)
 
     print(f'--- Read {etal_file}...')
     with h5py.File(etal_file,'r') as h5f:
         etal_shape  = h5f[var].shape
-        etal = h5f[var][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride]
-    #etal = h5py.File('.\\input_data\\HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000', 'r')[var]
+        etal = h5f[var][lat_slice, lon_slice]
 
     ## Debug: set checkerboard
     if 0:
@@ -111,26 +114,28 @@ def load_etal_lonlat_var(etal_file, stride=100, var=None, date=None, **param):
     ## Filter #1: discard non valid etal
     ## Version without np.where is a bit quicker, you can test it with the following if:
     if 1:
-        mask_nonvalid = etal!=-1. # Discard points without valid albedo value (outside projection and in the ocean)
+        mask_valid = etal!=-1. # Discard points without valid albedo value (outside projection and in the ocean)
         t0('mask_direct')
     else:
-        mask_nonvalid = np.where(etal!=-1.) # Discard points without valid albedo value (outside projection and in the ocean)
+        mask_valid = np.where(etal!=-1.) # Discard points without valid albedo value (outside projection and in the ocean)
         t0('mask_where')
 
-    print(mask_nonvalid.shape)
+    print(mask_valid.shape)
     s0 = etal.size
-    etal = etal[mask_nonvalid]
+    etal = etal[mask_valid]
     s1= etal.size
     print("--- {:.2f} % data masked".format(100*(s0-s1)/s0))
     
-    t0('mask_nonvalid_etal')
+    t0('mask_valid_etal')
     
     ## Get lonlat from file (quicker than creating them manually when no downsampling is used)
     if 1:
         metop_lonlat_file = '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
         with h5py.File(metop_lonlat_file, 'r') as flonlat:
-            lon = flonlat['lon'][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride][mask_nonvalid]
-            lat = flonlat['lat'][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride][mask_nonvalid]
+            lon = flonlat['lon'][lat_slice, lon_slice][mask_valid]
+            lat = flonlat['lat'][lat_slice, lon_slice][mask_valid]
+    
+        #lon, lat = load_etal_lonlat(lat_slice, lon_slice, mask=mask_valid)
     
     ## Create lonlat coords manually for etal sinusoidal projection
     else:
@@ -166,7 +171,7 @@ def load_etal_lonlat_var(etal_file, stride=100, var=None, date=None, **param):
     return lon, lat, dic_var
 
 
-def param_to_string(param, sep1='_', sep2='-'):
+def param_to_string(param, sep1='_', sep2='-', shorten=False):
     """
     Normalize parameter dict
 
@@ -178,6 +183,9 @@ def param_to_string(param, sep1='_', sep2='-'):
     if 'string_exclude' in param.keys():
         for k in param['string_exclude']:
             param.pop(k, None)
+    ## Shorten key if required
+    if shorten:
+        param = {k[:3]:v for k,v in param.items()}
     param.pop('string_exclude', None)
     delchars = ''.join(c for c in map(chr, range(256)) if not c.isalnum())
     param_str = sep1.join([f"{k}{sep2}{str(v).translate(str.maketrans('','',delchars))}" for k,v in param.items()])
@@ -204,19 +212,18 @@ class Plots:
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111)
     
-    def imshow(self, data, plot_param={}, **param):
+    def imshow(self, data, plot_param={}, noaxis=False, **param):
         self.type = 'imshow'
         self.initialize()
 
         data = data[self.lat,self.lon]
         ims = self.ax.imshow(data, **plot_param)
-        plt.tight_layout()
         cb = plt.colorbar(ims)
         
-        self.finalize(**param)
+        self.finalize(noaxis, **param)
 
-    def scatter(self, data1, data2, plot_param={}, **param):
-        self.type = 'scatter'
+    def scatter(self, data1, data2, plot_param={}, noaxis=False, **param):
+        self.type = 'scatter' 
         self.initialize()
 
         data1 = data1[self.lat,self.lon]
@@ -233,17 +240,19 @@ class Plots:
 
         plt.axis('square')
 
-        self.finalize(**param)
+        self.finalize(noaxis, **param)
 
-    def finalize(self, **param):
+    def finalize(self, noaxis=False, **param):
         from textwrap import wrap
         param_str = '\n'.join(wrap(param_to_string(param, sep1=' | ', sep2=':'), 60))
         self.ax.set_title(param_str, fontsize=10 )
+        plt.tight_layout()
         
-        param_str = param_to_string(param)
-        im_name = f"res_proj2vtk_{self.type}_{param_to_string(param)}.png"
-        #plt.savefig(im_name, dpi=200)
-        self.save_no_whitespace(im_name)
+        im_name = f"res_proj2vtk_{self.type}_{param_to_string(param, shorten=True)}.png"
+        if noaxis:
+            self.save_no_whitespace(im_name)
+        else:
+            plt.savefig(im_name, bbox_inches='tight')
         print(f"--- Output image saved to: {im_name}")
         plt.close(self.fig)
    
@@ -259,10 +268,19 @@ class Plots:
         self.ax.yaxis.set_major_locator(plt.NullLocator())
         self.fig.savefig(filepath, pad_inches=0, bbox_inches='tight')
 
-def export_to_h5(data, **param):
-    h5_name = f"res_proj2vtk_output_{param_to_string(param)}.h5"
+def export_to_h5(data, name, **param):
+    h5_name = f"cache_{name}_{param_to_string(param)}.h5"
     with h5py.File(h5_name, 'w') as h5_file:
-        h5_file[param['var']] = data
+        ## Proper way to save data as integer
+        if 1:
+            dataset = h5_file.create_dataset(
+                param['var'], chunks=True, compression='gzip',
+                fletcher32=True, shape=data.shape, dtype=int)
+            dataset.attrs.create('SCALING_FACTOR', 1e4)
+            dataset[:,:] = data.astype('i4')
+        ## else quick write keeping the type of data
+        else:
+            h5_file[param['var']] = data
     print(f"--- Output h5 saved to: {h5_name}")
 
 def load_h5_var(h5_path, var, slicing=None):
@@ -278,55 +296,6 @@ def load_h5_var(h5_path, var, slicing=None):
         print(f"--- File: {h5_path} not found.")
         return None
         
-def compare_with_real_msg(msg_interp, **param):
-    date = param['date']
-    var = param['var']
-    
-    ## MTAL (MTAL-R not available at this date)
-    if 1: 
-        msg_ref_file = f'/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/HDF5_LSASAF_MSG_ALBEDO-D10_MSG-Disk_{date}0000'
-        source_ref = 'RefMTAL'
-    
-    ## MDAL
-    else: 
-        msg_ref_file = f'/cnrm/vegeo/juncud/NO_SAVE/aod-test-2/v1/HDF5_LSASAF_MSG_ALBEDO_MSG-Disk_{date}0000'
-        source_ref = 'RefMDAL'
-    
-    with h5py.File(msg_ref_file) as h5ref:
-        msg_ref = h5ref[var][:]
-
-    msg_daniel_file = f'/cnrm/vegeo/juncud/scripts/eps_geos_{date}0000'
-    with h5py.File(msg_daniel_file) as h5ref:
-        msg_daniel = 1e4*h5ref[var][:]
-
-    with h5py.File('hdf5_lsasaf_usgs-igbp_lwmask_msg-disk', 'r') as flwmask:
-        lwmask = flwmask['LWMASK'][:]
-
-    nonvalid_mask = np.where(lwmask!=1)
-    msg_ref[nonvalid_mask] = -1
-    msg_daniel[nonvalid_mask] = -1
-    
-    albedo = {'cmap':'jet', 'vmin':0, 'vmax':6000}
-    albedo_diff = {'cmap':'seismic', 'vmin':-2000, 'vmax':2000}
-    albedo_scatter = {'cmin':1, 'cmap':'jet'}
-
-    source_vtk = 'Vtk'
-    source_daniel = 'Daniel'
-
-    p = Plots(zoom=0)
-
-    p.imshow(msg_interp,            plot_param=albedo,      **param,                              source=source_vtk)
-    p.imshow(msg_ref,               plot_param=albedo,      var=param['var'], date=param['date'], source=source_ref)
-    p.imshow(msg_daniel,            plot_param=albedo,      var=param['var'], date=param['date'], source=source_daniel)
-
-    p.imshow(msg_ref-msg_interp,    plot_param=albedo_diff, **param,                              source='diff'+source_ref+source_vtk)
-    p.imshow(msg_ref-msg_daniel,    plot_param=albedo_diff, var=param['var'], date=param['date'], source='diff'+source_ref+source_daniel)
-    p.imshow(msg_daniel-msg_interp, plot_param=albedo_diff, **param,                              source='diff'+source_daniel+source_vtk)
-
-    p.scatter(msg_ref, msg_interp,    plot_param=albedo_scatter, **param, s1=source_ref, s2=source_vtk)
-    p.scatter(msg_ref, msg_daniel,    plot_param=albedo_scatter, **param, s1=source_ref, s2=source_daniel)
-    p.scatter(msg_daniel, msg_interp, plot_param=albedo_scatter, **param, s1=source_daniel, s2=source_vtk)
-
 def get_time_range(start, end, days=[], **param):
     dseries = pd.date_range(start, end, freq='D')
     
@@ -363,23 +332,115 @@ def interpolate_etal_to_msg(etal_file, **param):
         data = np.zeros(msg_shape)-1.
         data[msg_valid_mask] = interp_var[param['var']]
         
-        export_to_h5(data, **param)
+        export_to_h5(data, 'etal2msg', **param)
         
         return data
 
-def get_etal_on_msg(etal_path, slicing=None, **param):
+class GridInterpolation:
+    def __init__(self, source, target, target_slicing=slice(None), **param):
+        """
+        Prepare interpolation from one grid type to another. Suppose that the target masked grid never change so it is possible to cache it at the first call.
+
+        source: 'modis' or 'etal'
+        target: 'etal' or 'msg'
+        """
+        self.source = source
+        self.target = target
+        self.target_slicing = target_slicing
+        self.param = param
+        self.cached_target = False
+
+        self.interp = vtk_interpolation(**param) 
+
+    def interpolate(self, source_file):
+        ti = SimpleTimer()
+        
+        if not self.cached_target:
+            if self.target=='msg':
+                print('### MSG extraction (target)')
+                target_lon, target_lat, target_lw_mask, target_shape = self._load_msg_lonlat(stride=1)
+                ti('read MSG')
+            elif self.target=='etal':
+                print('### ETAL extraction (target)')
+                self.target_shape, self.target_lw_mask = self._load_etal_shape(mask='land')
+                target_lon, target_lat = self._load_etal_lonlat(slicing=self.target_slicing, mask=self.target_lw_mask)
+                ti('read ETAL')
+            
+            self.interp.set_target(target_lon, target_lat)
+            ti('interp set_destination')
+            self.cached_target = True
+
+        if self.source=='etal':
+            print('### ETAL extraction (source)')
+            source_lon, source_lat, source_dic_var = load_etal_lonlat_var(source_file, stride=1, **self.param)
+            ti('read ETAL')
+        elif self.source=='modis':
+            print('### MODIS extraction (source)')
+            source_lon, source_lat, source_dic_var = load_modis_lonlat_var(source_file, stride=1, **self.param)
+            ti('read MODIS')
+        
+        print('### Interpolation')
+        self.interp.set_source(source_lon, source_lat, source_dic_var)
+        ti('interp set_source')
+        self.interp.run()
+        ti('interp run')
+        interp_var = self.interp.get_output()
+        ti('interp get_output')
+    
+         ## Interpolation return flatten array so we need to reshape the result
+        data = np.zeros(self.target_shape)-1.
+        data[self.target_lw_mask] = interp_var[self.param['var']]
+        
+        export_to_h5(data, **self.param)
+        
+        return data
+
+    def _load_etal_shape(self, mask=None):
+        metop_lwmask_file = '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/ETAL/etal_lwmask.h5'
+        with h5py.File(metop_lwmask_file, 'r') as flw:
+            metop_lwmask = flw['lwmask'][self.target_slicing]
+            shape = metop_lwmask.shape
+            if mask is None:
+                return shape
+            else:
+                if mask=='land': mask_value = 1
+                ma = np.where(metop_lwmask==mask_value)
+                return shape, ma
+
+    def _load_etal_lonlat(self, slicing=slice(None),  mask=slice(None)):
+        metop_lonlat_file = '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
+        with h5py.File(metop_lonlat_file, 'r') as flonlat:
+            lon = flonlat['lon'][slicing][mask]
+            lat = flonlat['lat'][slicing][mask]
+        return lon, lat
+
+def get_etal_on_msg(etal_path, slicing=slice(None), **param):
     """If cache file exists, load it, otherwise interpolate"""
     for k,v in param.items():
         print(f'{k}:{v}')
     
     ## Cache files are  stored in working directory for now
-    h5_path = pathlib.Path(f"res_proj2vtk_output_{param_to_string(param)}.h5")
+    h5_path = pathlib.Path(f"cache_etal2msg_{param_to_string(param)}.h5")
     data = load_h5_var(h5_path, param['var'], slicing)
     if data is not None:
         return data
 
     else:
-        return interpolate_etal_to_msg(etal_path, **param)
+        return interpolate_etal_to_msg(etal_path, **param)[slicing]
+
+def get_modis_on_etal(modis_path, slicing=None, **param):
+    """If cache file exists, load it, otherwise interpolate"""
+    for k,v in param.items():
+        print(f'{k}:{v}')
+    
+    ## Cache files are  stored in working directory for now
+    h5_path = pathlib.Path(f"cache_modis2etal_{param_to_string(param)}.h5")
+    data = load_h5_var(h5_path, param['var'], slicing)
+    if data is not None:
+        return data
+
+    else:
+        return interpolate_modis_to_etal(modis_path, **param)
 
 def load_mtalr(mtalr_path, slicing=None, **param):
     return load_h5_var(mtalr_path, param['var'], slicing)
@@ -387,7 +448,8 @@ def load_mtalr(mtalr_path, slicing=None, **param):
 
 def process_etal_series(**param):
 
-    mtalr_root = pathlib.Path('/cnrm/vegeo/SAT/DATA/MSG/Reprocessed-on-2017/MTAL/2015')
+    #mtalr_root = pathlib.Path('/cnrm/vegeo/SAT/DATA/MSG/Reprocessed-on-2017/MTAL/2015')
+    mtalr_root = pathlib.Path('/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/MTAL-R/2015')
     etal_root = pathlib.Path('/cnrm/vegeo/SAT/DATA/EPS/NRT-Operational/ETAL/2015')
     
     
@@ -439,10 +501,13 @@ def process_etal_series(**param):
     ## Data accumulation
 
     ## DEBUG: subsampling
-    if 0:
-        slicing = (slice(None, None, 4), slice(None, None, 4))
+    if 1:
+        slicing = (slice(None, None, 10), slice(None, None, 10))
         #slicing = (slice(380, 480), slice(1950, 2050)) # France
-        #slicing = (slice(380, 480), slice(1950, 2050)) # France
+        #slicing = (slice(50, 700), slice(1550, 3250)) # Euro
+        #slicing = (slice(700, 1850), slice(1240, 3450)) # NAfr
+        #slicing = (slice(1850, 3040), slice(2140, 3350)) # SAfr
+        #slicing = (slice(1460, 2970), slice(40, 740)) # SAme
         interp_param['slicing'] = slicing
         interp_param['string_exclude'] = ['slicing']
 
@@ -453,34 +518,38 @@ def process_etal_series(**param):
             lwmask = flwmask['LWMASK'][:]
 
     nonvalid_mask = np.where(lwmask!=1)
-    res_bias = np.zeros_like(lwmask, dtype=np.float)
+    res_bias = np.zeros_like(lwmask, dtype=float)
+    res_bias2 = np.zeros_like(lwmask, dtype=float)
     nbias = 0
 
 
     ## Plot params
-    albedo = {'cmap':'jet', 'vmin':0, 'vmax':6000}
-    albedo_diff = {'cmap':'seismic', 'vmin':-2000, 'vmax':2000}
+    albedo = {'cmap':'jet', 'vmin':0, 'vmax':0.6}
+    albedo_diff = {'cmap':'seismic', 'vmin':-0.15, 'vmax':0.15}
+    albedo_biasstd = {'cmap':'jet', 'vmin':0.0, 'vmax':0.08}
     source_vtk = 'VtkETAL'
     source_ref = 'RefMTALR'
     p = Plots(zoom=0)
 
     # Recursive plot
-    #recfig = plt.figure()
-    #recax1 = recfig.add_subplot(211)
-    #recax2 = recfig.add_subplot(212)
-    recfig, (recax1, recax2) = plt.subplots(2, 1, sharex=True)
+    rec_plot = 1
+    if rec_plot:
+        #recfig = plt.figure()
+        #recax1 = recfig.add_subplot(211)
+        #recax2 = recfig.add_subplot(212)
+        recfig, (recax1, recax2) = plt.subplots(2, 1, sharex=True)
 
-    recax1.axhline(20.0, ls='--', c='r')
-    recax1.axhline(10.0, ls='--', c='y')
-    recax1.axhline(5.0, ls='--', c='g')
-    recax1.axhline(0.0, ls='-', c='k')
-    recax1.axhline(-5.0, ls='--', c='g')
-    recax1.axhline(-10.0, ls='--', c='y')
-    recax1.axhline(-20.0, ls='--', c='r')
-    
-    recax2.axhline(0.015, ls='--', c='r')
-    recax2.axhline(0.0, ls='-', c='k')
-    recax2.axhline(-0.015, ls='--', c='r')
+        recax1.axhline(20.0, ls='--', c='r')
+        recax1.axhline(10.0, ls='--', c='y')
+        recax1.axhline(5.0, ls='--', c='g')
+        recax1.axhline(0.0, ls='-', c='k')
+        recax1.axhline(-5.0, ls='--', c='g')
+        recax1.axhline(-10.0, ls='--', c='y')
+        recax1.axhline(-20.0, ls='--', c='r')
+        
+        recax2.axhline(0.015, ls='--', c='r')
+        recax2.axhline(0.0, ls='-', c='k')
+        recax2.axhline(-0.015, ls='--', c='r')
 
     means = [[],[]]
     stds = [[],[]]
@@ -506,76 +575,67 @@ def process_etal_series(**param):
         # Compute bias
         bias = mtalr_on_msg-etal_on_msg
         res_bias += bias
+        res_bias2 += bias*bias
         nbias += 1
         print_stats(mtalr_on_msg, etal_on_msg, label=['mtalr', 'etal'])
 
-        if 0:
-            p.imshow(etal_on_msg, plot_param=albedo, **interp_param, source=source_vtk)
-            p.imshow(mtalr_on_msg, plot_param=albedo, var=interp_param['var'], date=interp_param['date'], source=source_ref)
-            p.imshow(bias, plot_param=albedo_diff, **interp_param, source='diff'+source_ref+source_vtk)
+        if 1:
+            p.imshow(etal_on_msg, plot_param=albedo, noaxis=True, **interp_param, source=source_vtk)
+            p.imshow(mtalr_on_msg, plot_param=albedo, noaxis=True, var=interp_param['var'], date=interp_param['date'], source=source_ref)
+            p.imshow(bias, plot_param=albedo_diff, noaxis=True, **interp_param, source='diff'+source_ref+source_vtk)
 
         # Fill recursive plot
-        #recax.violinplot([bias.ravel()], positions=[nbias], showmeans=False, showmedians=True, showextrema=True, widths=0.9)
-        
-        mask_015 = mtalr_on_msg.ravel()>0.15
-        bias_above = 100*bias.ravel()[mask_015]/mtalr_on_msg.ravel()[mask_015]
-        bias_below = bias.ravel()[~mask_015]
+        if rec_plot:
+            #recax.violinplot([bias.ravel()], positions=[nbias], showmeans=False, showmedians=True, showextrema=True, widths=0.9)
+            
+            mask_015 = mtalr_on_msg.ravel()>0.15
+            bias_above = 100*bias.ravel()[mask_015]/mtalr_on_msg.ravel()[mask_015]
+            bias_below = bias.ravel()[~mask_015]
 
-        print_stats(bias_above, bias_below, label=['bias_above_0.15', 'bias_below_0.15'], fmt='{:.3f}')
+            print_stats(bias_above, bias_below, label=['bias_above_0.15', 'bias_below_0.15'], fmt='{:.3f}')
 
-        means[0].append(bias_above.mean())
-        means[1].append(bias_below.mean())
-        stds[0].append(bias_above.std())
-        stds[1].append(bias_below.std())
-        dates.append(index.strftime('%Y-%m-%d'))
+            means[0].append(bias_above.mean())
+            means[1].append(bias_below.mean())
+            stds[0].append(bias_above.std())
+            stds[1].append(bias_below.std())
+            dates.append(index.strftime('%Y-%m-%d'))
 
-        #recax1.boxplot([bias_above], positions=[nbias], labels=[index.strftime('%Y-%m-%d')], widths=0.75, whis='range')
-        #recax2.boxplot([bias_below], positions=[nbias], labels=[index.strftime('%Y-%m-%d')], widths=0.75, whis='range')
-        
-        recax1.vlines(nbias-1, means[0][-1]-stds[0][-1], means[0][-1]+stds[0][-1])
-        recax2.vlines(nbias-1, means[1][-1]-stds[1][-1], means[1][-1]+stds[1][-1])
-        
-        #x = np.random.normal(nbias, 0.04, size=len(bias.ravel()))
-        #recax.scatter(x, bias.ravel(), alpha=0.2)
+            #recax1.boxplot([bias_above], positions=[nbias], labels=[index.strftime('%Y-%m-%d')], widths=0.75, whis='range')
+            #recax2.boxplot([bias_below], positions=[nbias], labels=[index.strftime('%Y-%m-%d')], widths=0.75, whis='range')
+            
+            recax1.vlines(nbias-1, means[0][-1]-stds[0][-1], means[0][-1]+stds[0][-1])
+            recax2.vlines(nbias-1, means[1][-1]-stds[1][-1], means[1][-1]+stds[1][-1])
+            
+            #x = np.random.normal(nbias, 0.04, size=len(bias.ravel()))
+            #recax.scatter(x, bias.ravel(), alpha=0.2)
 
-        if (nbias == 4) and 0:
-            recax1.plot(means[0], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
-            recax2.plot(means[1], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
+            if (nbias == 4) and 1:
+                break
 
-            recax1.set_ylabel('Relative bias(%)')
-            recax2.set_ylabel('MBE and std')
+    if rec_plot:
+        recax1.plot(means[0], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
+        recax2.plot(means[1], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
 
-            recax1.set_xticks(range(nbias))
-            recax1.set_xticklabels(dates)
-            recax1.xaxis.set_tick_params(rotation=30)
-            recax2.set_xticks(range(nbias))
-            recax2.set_xticklabels(dates)
-            recax2.xaxis.set_tick_params(rotation=30)
-            plt.tight_layout() 
-            plt.show()
-            sys.exit()
-
-    recax1.plot(means[0], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
-    recax2.plot(means[1], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
-
-    recax1.set_ylabel('Relative bias(%)')
-    recax2.set_ylabel('MBE and std')
-    recax1.set_xticks(range(nbias))
-    recax1.set_xticklabels(dates)
-    recax1.xaxis.set_tick_params(rotation=90)
-    recax2.set_xticks(range(nbias))
-    recax2.set_xticklabels(dates)
-    recax2.xaxis.set_tick_params(rotation=90)
-    plt.tight_layout() 
-    plt.show()
-    sys.exit()
+        recax1.set_ylabel('Relative bias(%)')
+        recax2.set_ylabel('MBE and std')
+        recax1.set_xticks(range(nbias))
+        recax1.set_xticklabels(dates)
+        recax1.xaxis.set_tick_params(rotation=90)
+        recax2.set_xticks(range(nbias))
+        recax2.set_xticklabels(dates)
+        recax2.xaxis.set_tick_params(rotation=90)
+        plt.tight_layout() 
+        plt.show()
+        #sys.exit()
     
     res_bias /= nbias
+    res_bias2 /= nbias
     param2 = {k:v for k,v in interp_param.items()}
     param2.pop('date', None)
     param2['start'] = param['start']
     param2['end'] = param['end']
-    p.imshow(res_bias, plot_param=albedo_diff, **param2, source='diff'+source_ref+source_vtk)
+    p.imshow(res_bias, plot_param=albedo_diff, **param2, source='bias'+source_ref+source_vtk)
+    p.imshow(np.sqrt(res_bias2-res_bias**2), plot_param=albedo_biasstd, **param2, source='biasSTD'+source_ref+source_vtk)
 
     
     ## Init empty data containers to store results
@@ -597,8 +657,6 @@ def main(param):
 
     ti = SimpleTimer()
 
-
-
     if 1:
         process_etal_series(**param)        
     
@@ -606,54 +664,7 @@ def main(param):
     else:
         data = load_h5(**param)
 
-    #print('### Compare results')
-    #compare_with_real_msg(data, **param)
-    #ti('comparison')
-
-
     ti.show()
-
-
-def main_vtk(param):
-
-    ti = SimpleTimer() 
-
-
-    if 1:
-
-        print('### MSG  extraction (target)')
-        tlon, tlat, valid_mask, msg_shape = msg_to_vtk(stride=1, lonlat_only=True)
-        ti('read MSG')
-        
-        print('### ETAL extraction (source)')
-        slon, slat, dic_var = etal_to_vtk(stride=1, lonlat_only=True, **param)
-        ti('read ETAL')
-
-        print('### Interpolation')
-        interp = vtk_interpolation(**param) 
-        ti('interp init')
-        interp.set_source(slon, slat, dic_var)
-        ti('interp set_source')
-        interp.set_target(tlon, tlat)
-        ti('interp set_destination')
-        interp.run()
-        ti('interp run')
-        interp_var = interp.get_output()
-        ti('interp get_output')
-
-        data = np.zeros(msg_shape)-1.
-        data[valid_mask] = interp_var[param['var']]
-        
-    ## Load cache file
-    else:
-        data = load_h5(**param)
-
-    print('### Compare results')
-    compare_with_real_msg(data, **param)
-    ti('comparison')
-
-    ti.show()
-
 
 def combine_param(param_dic):
     """
