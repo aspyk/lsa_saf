@@ -198,10 +198,18 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
         #iLatEndEps   = 6480 
         #iLonStartEps = 19290 
         #iLonEndEps   = 19530 
-        iLatStartEps = 5900
-        iLatEndEps   = 6900 
-        iLonStartEps = 18900 
-        iLonEndEps   = 19900 
+        ## 500x500 Alps
+        if 1:
+            iLatStartEps = 4200
+            iLatEndEps   = 4700 
+            iLonStartEps = 18150 
+            iLonEndEps   = 18650 
+        ## 100x100 Alps
+        if 0:
+            iLatStartEps = 4350
+            iLatEndEps   = 4450 
+            iLonStartEps = 18430 
+            iLonEndEps   = 18530 
     
     etal_file = f'/cnrm/vegeo/juncud/NO_SAVE/ETAL/2020/12/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_{dateForFile}0000'
     #etal_file = '/cnrm/vegeo/juncud/NO_SAVE/ETAL/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012050000'
@@ -210,17 +218,24 @@ def etal_to_vtk(stride=100, lonlat_only=False, var=None, date=None, **param):
     with h5py.File(etal_file,'r') as h5f:
         etal_shape  = h5f[var].shape
         etal = h5f[var][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride]
+        qflag = h5f['Q-Flag'][iLatStartEps:iLatEndEps:stride,iLonStartEps:iLonEndEps:stride]
     #etal = h5py.File('.\\input_data\\HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000', 'r')[var]
 
-    ## Debug: set checkerboard
+    ## DEBUG: set checkerboard
     if 0:
         etal = 6000*(np.indices(etal.shape).sum(axis=0) % 2)
         print(etal)
 
-    ## Debug: plot input etal to image
+    ## DEBUG: plot input etal to image
     if 0:
-        var_dic = {'data':etal, 'name':'etal'}
-        export_to_image(var_dic, vmin=0, vmax=6000)
+        albedo = {'cmap':'jet', 'vmin':0, 'vmax':6000}
+        qflag_p = {'cmap':'jet'}
+        p = Plots(zoom=0)
+        qflag = (qflag & 3)==1
+        etal[qflag==0] = -1
+        p.imshow(etal, plot_param=albedo, **param, source='ETAL')
+        #p.imshow(qflag, plot_param=qflag_p, **param, source='ETAL')
+        sys.exit()
 
     t0('h5_slice')
 
@@ -436,7 +451,16 @@ class Plots:
 def export_to_h5(data, **param):
     h5_name = f"res_proj2vtk_output_{params_to_string(param)}.h5"
     with h5py.File(h5_name, 'w') as h5_file:
-        h5_file[param['var']] = data
+        ## Proper way to save data as integer
+        if 1:
+            dataset = h5_file.create_dataset(
+                param['var'], chunks=True, compression='gzip',
+                fletcher32=True, shape=data.shape, dtype=int)
+            dataset.attrs.create('SCALING_FACTOR', 1e4)
+            dataset[:,:] = data.astype('i4')
+        ## else quick write keeping the type of data
+        else:
+            h5_file[param['var']] = data
     print(f"--- Output h5 saved to: {h5_name}")
 
 def load_h5(**param):
@@ -495,7 +519,7 @@ def compare_with_real_msg(msg_interp, **param):
     p.scatter(msg_ref, msg_daniel,    plot_param=albedo_scatter, **param, s1=source_ref, s2=source_daniel)
     p.scatter(msg_daniel, msg_interp, plot_param=albedo_scatter, **param, s1=source_daniel, s2=source_vtk)
 
-def main(param):
+def DEPRECATED_main(param):
 
     ti = SimpleTimer()
 
