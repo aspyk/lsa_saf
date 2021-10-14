@@ -7,6 +7,7 @@ import os,sys
 from tools import SimpleTimer
 
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 import datetime as dt
 
@@ -212,13 +213,18 @@ class Plots:
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111)
     
+
+
     def imshow(self, data, plot_param={}, noaxis=False, **param):
         self.type = 'imshow'
         self.initialize()
 
         data = data[self.lat,self.lon]
         ims = self.ax.imshow(data, **plot_param)
-        cb = plt.colorbar(ims)
+        divider = make_axes_locatable(self.ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+
+        cb = plt.colorbar(ims, cax=cax)
         
         self.finalize(noaxis, **param)
 
@@ -266,36 +272,8 @@ class Plots:
         self.ax.margins(0,0)
         self.ax.xaxis.set_major_locator(plt.NullLocator())
         self.ax.yaxis.set_major_locator(plt.NullLocator())
-        self.fig.savefig(filepath, pad_inches=0, bbox_inches='tight')
+        self.fig.savefig(filepath, pad_inches=0, bbox_inches='tight', dpi=200)
 
-def export_to_h5(data, name, **param):
-    h5_name = f"cache_{name}_{param_to_string(param)}.h5"
-    with h5py.File(h5_name, 'w') as h5_file:
-        ## Proper way to save data as integer
-        if 1:
-            dataset = h5_file.create_dataset(
-                param['var'], chunks=True, compression='gzip',
-                fletcher32=True, shape=data.shape, dtype=int)
-            dataset.attrs.create('SCALING_FACTOR', 1e4)
-            dataset[:,:] = data.astype('i4')
-        ## else quick write keeping the type of data
-        else:
-            h5_file[param['var']] = data
-    print(f"--- Output h5 saved to: {h5_name}")
-
-def load_h5_var(h5_path, var, slicing=None):
-    if h5_path.is_file():
-        with h5py.File(h5_path, 'r') as h5_file:
-            if slicing is None:
-                data = h5_file[var][:]
-            else:
-                data = h5_file[var][slicing]
-        print(f"--- Read h5 from: {h5_path}")
-        return data
-    else:
-        print(f"--- File: {h5_path} not found.")
-        return None
-        
 def get_time_range(start, end, days=[], **param):
     dseries = pd.date_range(start, end, freq='D')
     
@@ -336,220 +314,217 @@ def interpolate_etal_to_msg(etal_file, **param):
         
         return data
 
-
-class EPS():
-    def __init__(self, product, var, slicing=slice(None), mask_type='land'):
-
-        self.ti = SimpleTimer()
-
+class SatelliteTools:
+    def __init__(self, product, var, slicing=slice(None)):
         self.product = product
         self.var = var
         self.slicing= slicing
 
-        self.ground_mask_file = '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/ETAL/etal_lwmask.h5'
-        self.mask_name = 'lwmask'
-        self.mask_type = mask_type
-        self.latlon_file = '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
+        self._full_shape = None
+        self._shape = None
 
-        self.data = None
-        self.cache_lat = None # lat and lon cache to only read them once
-        self.cache_lon = None
+        self._ground_mask = True 
+        self._mask = True
+
+        self._lat = None
+        self._lon = None
+
+    @property
+    def full_shape(self):
+        if self._full_shape is None:
+            with h5py.File(self.ground_mask_conf['file'], 'r') as flw:
+                self._full_shape = flw[self.ground_mask_conf['var']].shape
+        return self._full_shape
+
+    @property
+    def shape(self):
+        if self._shape is None:
+            out_shape = [] 
+            for s,l in zip(self.slicing, self.full_shape):
+                out_shape.append(len(range(*s.indices(l))))
+            self._shape = tuple(out_shape)
+        return self._shape
+    
+    @property
+    def mask(self):
+        if self._mask is True:
+            self._mask = self.ground_mask
+        return self._mask
+
+    @mask.setter
+    def mask(self, value):
+        self._mask = value
+
+    @property
+    def ground_mask(self):
+        """
+        Load ground mask if asked 
+        """
+        self.ti()
+        if self._ground_mask is True:
+            if self.ground_mask_conf['type'] is not None:
+                print(f"--- Read {self.product.upper()} mask in {self.ground_mask_conf['file']} ...")
+                with h5py.File(self.ground_mask_conf['file'], 'r') as flw:
+                    lwmask = flw[self.ground_mask_conf['var']][self.slicing]
+                    if self.ground_mask_conf['type']=='land': mask_value = 1
+                    self._ground_mask = lwmask==mask_value
+            ## Update main mask
+            self.mask = self._mask & self._ground_mask
+        return self._ground_mask
+        self.ti('get_ground_mask')
+
+    @property
+    def lat(self):
+        if self._lat is None:
+            print(f"--- Read {self.product.upper()} lat in {self.lat_conf['file']} ...")
+            with h5py.File(self.lat_conf['file'], 'r') as fl:
+                self._lat = fl[self.lat_conf['var']][self.slicing]*self.lat_conf['scaling']
+        return self._lat[self.mask]
+
+    @property
+    def lon(self):
+        if self._lon is None:
+            print(f"--- Read {self.product.upper()} lon in {self.lon_conf['file']} ...")
+            with h5py.File(self.lon_conf['file'], 'r') as fl:
+                self._lon = fl[self.lon_conf['var']][self.slicing]*self.lon_conf['scaling']
+        return self._lon[self.mask]
+
+    def interpolate_on(self, target, source_file, use_cache, **param):
+        """If cache file exists, load it, otherwise interpolate"""
         
-        self.ground_mask = None 
-        self.mask = True # final mask = ground_mask & variable_mask
+        for k,v in param.items():
+            print(f'{k}:{v}')
 
+        interp_type = f'{self.product}2{type(target).__name__}'
+
+        interpolation_required = ~use_cache
+        if use_cache:
+            ## Cache files are  stored in working directory for now
+            h5_path = pathlib.Path(f"./cache/cache_{interp_type}_{param_to_string(param)}.h5")
+            #data = self.load_h5_var(h5_path, param['var'], target.slicing)
+            data = self.load_h5_var(h5_path, param['var']) # return cache as it without slicing (cache may have already been sliced)
+            if data is not None:
+                return data
+            else:
+                interpolation_required = True
+
+        if interpolation_required:
+
+            self.get_data(source_file)
+
+            ti = SimpleTimer()
+
+            ## Interpolation
+            print('### Interpolation')
+            interp = vtk_interpolation(**param) 
+            ti('interp init')
+            interp.set_source(self.lon, self.lat, {self.var:self.data})
+            ti('interp set_source')
+            interp.set_target(target.lon, target.lat)
+            ti('interp set_destination')
+            interp.run()
+            ti('interp run')
+            interp_var = interp.get_output()
+            ti('interp get_output')
+
+            ## Extract and save data
+            data = np.full(target.shape, -1.)
+            data[target.ground_mask] = interp_var[param['var']]
+            self.export_to_h5(data, interp_type, **param)
+            
+            return data
+
+    def export_to_h5(self, data, name, **param):
+        h5_name = f"./cache/cache_{name}_{param_to_string(param)}.h5"
+        with h5py.File(h5_name, 'w') as h5_file:
+            ## Proper way to save data as integer
+            if 1:
+                dataset = h5_file.create_dataset(
+                    param['var'], chunks=True, compression='gzip',
+                    fletcher32=True, shape=data.shape, dtype=int)
+                dataset.attrs.create('SCALING_FACTOR', 1e4)
+                dataset[:,:] = data.astype('i4')
+            ## else quick write keeping the type of data
+            else:
+                h5_file[param['var']] = data
+        print(f"--- Output h5 saved to: {h5_name}")
+
+    def load_h5_var(self, h5_path, var, slicing=slice(None)):
+        if h5_path.is_file():
+            with h5py.File(h5_path, 'r') as h5_file:
+                data = h5_file[var][slicing]
+            print(f"--- Read h5 from: {h5_path}")
+            return data
+        else:
+            print(f"--- File: {h5_path} not found.")
+            return None
+            
     def describe(self):
         print(self.data.shape)
         print(self.lon.shape)
 
         print_stats(self.data)
         print(np.count_nonzero(self.data==-1))
+    
 
-
-    def get_ground_mask(self):
-        """
-        Load ground mask if asked 
-        """
-        self.ti()
-        if self.mask_type is None:
-            with h5py.File(self.ground_mask_file, 'r') as flw:
-                self.shape = flw[self.mask_name][self.slicing].shape
-            self.ground_mask = True
-        else:
-            print(f'--- Read mask in {self.ground_mask_file} ...')
-            with h5py.File(self.ground_mask_file, 'r') as flw:
-                lwmask = flw[self.mask_name][self.slicing]
-                self.shape = lwmask.shape
-                if self.mask_type=='land': mask_value = 1
-                #self.mask = np.where(lwmask==mask_value)
-                self.ground_mask = lwmask==mask_value
-        self.ti('get_ground_mask')
-
-    def get_data(self, data_file):
-        """
-        Read a data file and compute a variable mask
-        """
-        self.ti()
-        if self.ground_mask is None: self.get_ground_mask()
-
-        print(f'--- Read {self.var} in {data_file} ...')
-        with h5py.File(data_file,'r') as h5f:
-            self.data = h5f[self.var][self.slicing]
-        self.mask = self.ground_mask & (self.data!=-1)
-        self.data = self.data[self.mask]
-        self.ti('get_data')
-
-    def get_latlon(self):
-        """
-        Read lat/lon file and cache values to avoid new reading for each new data file
-        """
-        self.ti()
-        if self.ground_mask is None: self.get_ground_mask()
-        
-        if self.cache_lat is None:
-            print(f'--- Read lat/lon in {self.latlon_file} ...')
-            with h5py.File(self.latlon_file, 'r') as flatlon:
-                self.cache_lat = flatlon['lat'][self.slicing]
-                self.cache_lon = flatlon['lon'][self.slicing]
-        self.lat = self.cache_lat[self.mask]
-        self.lon = self.cache_lon[self.mask]
-        self.ti('get_latlon')
-
-    def get_latlon_and_data(self):
-        self.get_data()
-        self.get_latlon()
-
-class MSG():
+class EPS(SatelliteTools):
     def __init__(self, product, var, slicing=slice(None), mask_type='land'):
+        
+        super().__init__(product, var, slicing)
 
         self.ti = SimpleTimer()
 
-        self.product = product
-        self.var = var
-        self.slicing= slicing
-
-        self.ground_mask_file = 'hdf5_lsasaf_usgs-igbp_lwmask_msg-disk'
-        self.mask_name = 'LWMASK'
-        self.mask_type = mask_type
-        self.latlon_file = '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
-        self.lat_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision'
-        self.lon_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision'
+        self.ground_mask_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL/etal_lwmask.h5',
+                                 'var': 'lwmask',
+                                 'type': mask_type}
+        self.lat_conf = {'file': '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc',
+                         'var': 'lat',
+                         'scaling': 1.}
+        self.lon_conf = {'file': '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc',
+                         'var': 'lon',
+                         'scaling': 1.}
 
         self.data = None
-        self.cache_lat = None # lat and lon cache to only read them once
-        self.cache_lon = None
-        
-        self.ground_mask = None 
-        self.mask = True # final mask = ground_mask & variable_mask
 
-    def get_ground_mask(self):
+    def get_data(self, data_file, mask_value=None):
         """
-        Load ground mask if asked 
+        Read a data file and compute a variable mask
+        
+        :mask_value: None: return a flatten array with only valid data
+                     <number> : return an array with the shape of the read data and <number> used as non valid data.
         """
         self.ti()
-        if self.mask_type is None:
-            with h5py.File(self.ground_mask_file, 'r') as flw:
-                self.shape = flw[self.mask_name][self.slicing].shape
-            self.ground_mask = True
+        print(f'--- Read {self.product.upper()}/{self.var} in {data_file} ...')
+        with h5py.File(data_file,'r') as h5f:
+            self.data0 = h5f[self.var][self.slicing]
+        self.mask = self.ground_mask & (self.data0!=-1)
+        if mask_value is None:
+            self.data = self.data0[self.mask]
         else:
-            print(f'--- Read mask in {self.ground_mask_file} ...')
-            with h5py.File(self.ground_mask_file, 'r') as flw:
-                lwmask = flw[self.mask_name][self.slicing]
-                self.shape = lwmask.shape
-                if self.mask_type=='land': mask_value = 1
-                #self.mask = np.where(lwmask==mask_value)
-                self.ground_mask = lwmask==mask_value
-        self.ti('get_ground_mask')
+            self.data = np.zeros(self.shape) + mask_value
+            self.data[self.mask] = self.data0[self.mask]
+        self.ti('get_data')
 
-    def get_latlon(self):
-        """
-        Read lat/lon file and cache values to avoid new reading for each new data file
-        """
-        self.ti()
-        if self.ground_mask is None: self.get_ground_mask()
+
+class MSG(SatelliteTools):
+    def __init__(self, product, var, slicing=slice(None), mask_type='land'):
+
+        super().__init__(product, var, slicing)
+
+        self.ti = SimpleTimer()
+
+        self.ground_mask_conf = {'file': 'hdf5_lsasaf_usgs-igbp_lwmask_msg-disk',
+                                 'var': 'LWMASK',
+                                 'type': mask_type}
+        self.lat_conf = {'file': '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision',
+                         'var': 'LAT',
+                         'scaling': 0.0001}
+        self.lon_conf = {'file': '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision',
+                         'var': 'LON',
+                         'scaling': 0.0001}
+
+        self.data = None
         
-        if self.cache_lat is None:
-            print(f'--- Read lat/lon in {self.latlon_file} ...')
-            with h5py.File(self.lat_file, 'r') as flat:
-                self.cache_lat = flat['LAT'][self.slicing]/10000.
-            with h5py.File(self.lon_file, 'r') as flon:
-                self.cache_lon = flon['LON'][self.slicing]/10000.
-        self.lat = self.cache_lat[self.mask]
-        self.lon = self.cache_lon[self.mask]
-        self.ti('get_latlon')
-
-class GridInterpolation:
-    def __init__(self, source, target, **param):
-        """
-        Prepare interpolation from one grid type to another. Suppose that the target masked grid never change so it is possible to cache it at the first call.
-
-        source: 'modis' or 'etal'
-        target: 'etal' or 'msg'
-        """
-        self.source = source
-        self.target = target
-        self.param = param
-        self.cached_target = False
-
-        self.interp = vtk_interpolation(**param) 
-
-    def interpolate(self, source_file):
-        ti = SimpleTimer()
-        
-        if not self.cached_target:
-            if self.target=='msg':
-                print('### MSG extraction (target)')
-                target_lon, target_lat, target_lw_mask, target_shape = self._load_msg_lonlat(stride=1)
-                ti('read MSG')
-            elif self.target=='etal':
-                print('### ETAL extraction (target)')
-                self.target_shape, self.target_lw_mask = self._load_etal_shape(mask='land')
-                target_lon, target_lat = self._load_etal_lonlat(slicing=self.target_slicing, mask=self.target_lw_mask)
-                ti('read ETAL')
-            
-            self.interp.set_target(target_lon, target_lat)
-            ti('interp set_destination')
-            self.cached_target = True
-
-        if self.source=='etal':
-            print('### ETAL extraction (source)')
-            source_lon, source_lat, source_dic_var = load_etal_lonlat_var(source_file, stride=1, **self.param)
-            ti('read ETAL')
-        elif self.source=='modis':
-            print('### MODIS extraction (source)')
-            source_lon, source_lat, source_dic_var = load_modis_lonlat_var(source_file, stride=1, **self.param)
-            ti('read MODIS')
-        
-        print('### Interpolation')
-        self.interp.set_source(source_lon, source_lat, source_dic_var)
-        ti('interp set_source')
-        self.interp.run()
-        ti('interp run')
-        interp_var = self.interp.get_output()
-        ti('interp get_output')
-    
-         ## Interpolation return flatten array so we need to reshape the result
-        data = np.zeros(self.target_shape)-1.
-        data[self.target_lw_mask] = interp_var[self.param['var']]
-        
-        export_to_h5(data, **self.param)
-        
-        return data
-
-
-def get_etal_on_msg(etal_path, slicing=slice(None), **param):
-    """If cache file exists, load it, otherwise interpolate"""
-    for k,v in param.items():
-        print(f'{k}:{v}')
-    
-    ## Cache files are  stored in working directory for now
-    h5_path = pathlib.Path(f"cache_etal2msg_{param_to_string(param)}.h5")
-    data = load_h5_var(h5_path, param['var'], slicing)
-    if data is not None:
-        return data
-
-    else:
-        return interpolate_etal_to_msg(etal_path, **param)[slicing]
 
 def get_modis_on_etal(modis_path, slicing=None, **param):
     """If cache file exists, load it, otherwise interpolate"""
@@ -564,9 +539,6 @@ def get_modis_on_etal(modis_path, slicing=None, **param):
 
     else:
         return interpolate_modis_to_etal(modis_path, **param)
-
-def load_mtalr(mtalr_path, slicing=None, **param):
-    return load_h5_var(mtalr_path, param['var'], slicing)
 
 def get_all_filenames(**param):
     path_dic = {}
@@ -615,12 +587,9 @@ def process_etal_series(**param):
 
     df = get_all_filenames(**param)
 
-
-
     ## Get ETAL on MSG grid 
     interp_param = {
             'var' : 'AL-BB-BH',
-            'date' : '20201205',
             'kernel' : 'inverse_distance',
             #'kernel' : ['mean','inverse_distance','gaussian'],
             #'radius' : [5,10],
@@ -633,8 +602,10 @@ def process_etal_series(**param):
 
     ## DEBUG: subsampling
     if 1:
-        slicing_msg = (slice(None, None, 10), slice(None, None, 10))
-        slicing_eps = (slice(None, None, 100), slice(None, None, 100))
+        #slicing_msg = (slice(None, None, 2), slice(None, None, 2))
+        slicing_msg = (slice(None), slice(None))
+        slicing_eps = (slice(None, None, 10), slice(None, None, 10))
+        #slicing_eps = (slice(850, 17150, 1), slice(9000, 27000, 1)) # Remove points not on MSG disc
         #slicing = (slice(380, 480), slice(1950, 2050)) # France
         #slicing = (slice(50, 700), slice(1550, 3250)) # Euro
         #slicing = (slice(700, 1850), slice(1240, 3450)) # NAfr
@@ -643,24 +614,17 @@ def process_etal_series(**param):
         interp_param['slicing'] = slicing_eps
         interp_param['string_exclude'] = ['slicing']
 
-    #mtalr = MSG(product='mtalr', var='AL-BB-BH', slicing=slice(None), mask_type='land')   
-    mtalr = MSG(product='mtalr', var='AL-BB-BH', slicing=slicing_msg, mask_type='land')   
-    etalr = EPS(product='etalr', var='AL-BB-BH', slicing=slicing_eps, mask_type='land')   
-
-    mtalr.get_latlon()
-
-    ims = plt.imshow(mtalr.ground_mask)
-    plt.colorbar(ims)
-    plt.show()
+    ## Create product objects
+    mtalr = MSG(product='mtalr', var=interp_param['var'], slicing=slicing_msg, mask_type='land')   
+    etalr = EPS(product='etalr', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
 
     res_bias = np.zeros_like(mtalr.shape, dtype=float)
     res_bias2 = np.zeros_like(mtalr.shape, dtype=float)
     nbias = 0
 
-    sys.exit()
-
     ## Plot params
     albedo = {'cmap':'jet', 'vmin':0, 'vmax':0.6}
+    blank = {'cmap':'binary', 'vmin':0, 'vmax':0.6}
     albedo_diff = {'cmap':'seismic', 'vmin':-0.15, 'vmax':0.15}
     albedo_biasstd = {'cmap':'jet', 'vmin':0.0, 'vmax':0.08}
     source_vtk = 'VtkETAL'
@@ -691,8 +655,46 @@ def process_etal_series(**param):
     stds = [[],[]]
     dates = []
 
+    tglob = SimpleTimer()
+
+    for i, (index,row) in enumerate(df.iterrows()):
+        print(f'\n================ {index:%Y-%m-%d} ================')
+
+        params = {}
+        params['id'] = f'{i:03d}'
+        params['date'] = f'{index:%Y%m%d}'
+
+        ## DEBUG ON: show input data (disable to avoid loading input data if cache file already exists)
+        if 1:
+            if row['etalr_path'] is None:
+                p.imshow(np.zeros(etalr.shape), plot_param=blank, noaxis=True, **params, source='None')
+                continue
+            
+            etalr.get_data(row['etalr_path'], mask_value=-1)
+            p.imshow(etalr.data*0.0001, plot_param=albedo, noaxis=True, **params, source='etalr')
+        ## DEBUG OFF
+        else:
+            if row['etalr_path'] is None:
+                print('--- No data file found for this date.')
+                tglob(params['id'])
+                continue
+
+        #etalr_on_msg = etalr.interpolate_on(mtalr, source_file=row['etalr_path'], use_cache=True, date=params['date'], **interp_param)
+
+        if 0:
+            p.imshow(etalr_on_msg*0.0001, plot_param=albedo, noaxis=False, **params, **interp_param, source=source_vtk)
+
+        tglob(params['id'])
+
+        if (i==6) & 0:
+            print('--- BREAK LOOP')
+            break
+
+    tglob.show()
+    sys.exit()
+
     for index,row in df.iterrows():
-        if (row['etal_path'] is None) or (row['mtalr_path'] is None):
+        if (row['etalr_path'] is None) or (row['mtalr_path'] is None):
             continue
 
         etal = ETAL(slicing, interp_param['var'])
@@ -1009,7 +1011,7 @@ if __name__=='__main__':
             'start' : ['2007-01-05'],
             #'end' : ['2015-12-25'],
             'end' : ['2009-12-25'],
-            'size' : [10],
+            #'size' : [10],
            }
 
     for param in combine_param(test):
