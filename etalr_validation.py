@@ -1,7 +1,7 @@
 import h5py
 import numpy as np
-#import vtk
-#from vtk.util import numpy_support as ns
+
+from pyhdf.SD import SD, SDC # To read HDF-EOS (HDF4 type) MODIS format.
 
 import os,sys
 from tools import SimpleTimer
@@ -331,6 +331,7 @@ class SatelliteTools:
 
     @property
     def full_shape(self):
+        """Get global shape before slicing"""
         if self._full_shape is None:
             with h5py.File(self.ground_mask_conf['file'], 'r') as flw:
                 self._full_shape = flw[self.ground_mask_conf['var']].shape
@@ -338,6 +339,7 @@ class SatelliteTools:
 
     @property
     def shape(self):
+        """Compute shape after slicing without loading data"""
         if self._shape is None:
             out_shape = [] 
             for s,l in zip(self.slicing, self.full_shape):
@@ -366,8 +368,8 @@ class SatelliteTools:
                 print(f"--- Read {self.product.upper()} mask in {self.ground_mask_conf['file']} ...")
                 with h5py.File(self.ground_mask_conf['file'], 'r') as flw:
                     lwmask = flw[self.ground_mask_conf['var']][self.slicing]
-                    if self.ground_mask_conf['type']=='land': mask_value = 1
-                    self._ground_mask = lwmask==mask_value
+                if self.ground_mask_conf['type']=='land': mask_value = 1
+                self._ground_mask = lwmask==mask_value
             ## Update main mask
             self.mask = self._mask & self._ground_mask
         return self._ground_mask
@@ -401,8 +403,8 @@ class SatelliteTools:
         if use_cache:
             ## Cache files are  stored in working directory for now
             h5_path = pathlib.Path(f"./cache/cache_{interp_type}_{param_to_string(param)}.h5")
-            #data = self.load_h5_var(h5_path, param['var'], target.slicing)
-            data = self.load_h5_var(h5_path, param['var']) # return cache as it without slicing (cache may have already been sliced)
+            #data = self.load_h5_cache(h5_path, param['var'], target.slicing)
+            data = self.load_h5_cache(h5_path, param['var']) # return cache as it without slicing (cache may have already been sliced)
             if data is not None:
                 return data
             else:
@@ -449,7 +451,7 @@ class SatelliteTools:
                 h5_file[param['var']] = data
         print(f"--- Output h5 saved to: {h5_name}")
 
-    def load_h5_var(self, h5_path, var, slicing=slice(None)):
+    def load_h5_cache(self, h5_path, var, slicing=slice(None)):
         if h5_path.is_file():
             with h5py.File(h5_path, 'r') as h5_file:
                 data = h5_file[var][slicing]
@@ -466,6 +468,48 @@ class SatelliteTools:
         print_stats(self.data)
         print(np.count_nonzero(self.data==-1))
     
+
+class MODIS(SatelliteTools):
+    def __init__(self, product, var, slicing=slice(None), mask_type='land'):
+        
+        super().__init__(product, var, slicing)
+
+        self.ti = SimpleTimer()
+
+        self.ground_mask_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL/etal_lwmask.h5',
+                                 'var': 'lwmask',
+                                 'type': mask_type}
+        self.lat_conf = {'file': '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc',
+                         'var': 'lat',
+                         'scaling': 1.}
+        self.lon_conf = {'file': '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc',
+                         'var': 'lon',
+                         'scaling': 1.}
+
+        self.data = None
+
+    def get_data(self, data_file, mask_value=None):
+        """
+        Read a data file and compute a variable mask
+        
+        :mask_value: None: return a flatten array with only valid data
+                     <number> : return an array with the shape of the read data and <number> used as non valid data.
+        """
+        self.ti()
+        print(f'--- Read {self.product.upper()}/{self.var} in {data_file} ...')
+        with h5py.File(data_file,'r') as h5f:
+            self.data0 = h5f[self.var][self.slicing]
+        self.mask = self.ground_mask & (self.data0!=-1)
+        if mask_value is None:
+            self.data = self.data0[self.mask]
+        else:
+            self.data = np.zeros(self.shape) + mask_value
+            self.data[self.mask] = self.data0[self.mask]
+        self.ti('get_data')
+
+    def load_hdf_var(self, data_file, var, slicing):
+        with h5py.File(data_file,'r') as h5f:
+            self.data0 = h5f[var][slicing]
 
 class EPS(SatelliteTools):
     def __init__(self, product, var, slicing=slice(None), mask_type='land'):
@@ -505,6 +549,9 @@ class EPS(SatelliteTools):
             self.data[self.mask] = self.data0[self.mask]
         self.ti('get_data')
 
+    def load_hdf_var(self, data_file, var, slicing):
+        with h5py.File(data_file,'r') as h5f:
+            self.data0 = h5f[var][slicing]
 
 class MSG(SatelliteTools):
     def __init__(self, product, var, slicing=slice(None), mask_type='land'):
@@ -544,12 +591,12 @@ def get_all_filenames(**param):
     path_dic = {}
     path_dic['mtalr'] = {'root':pathlib.Path('/cnrm/vegeo/SAT/DATA/MSG/Reprocessed-on-2017/MTAL'),
                               'format':'%Y/%m/%d/HDF5_LSASAF_MSG_ALBEDO-D10_MSG-Disk_%Y%m%d0000'}
-    #path_dic['etal']  = {'root':pathlib.Path('/cnrm/vegeo/SAT/DATA/EPS/NRT-Operational/ETAL/2015'),
-    #                         'format':}
+    #path_dic['etal']  = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL'),
+    #                          'format':'%Y/%m/%d/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_%Y%m%d0000'}
     path_dic['etalr'] = {'root':pathlib.Path('/cnrm/vegeo/fransenr/CODES/DATA/NO_SAVE/EPS_Reprocess/ETAL'),
                               'format':'%Y/%m/%d/HDF5_LSASAF_M02-AVHR_ETAL_GLOBE_%Y%m%d0000'}
-    #path_dic['modis'] = {'root':pathlib.Path(''),
-    #                          'format':}
+    path_dic['modis'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
+                              'format':'%Y/MCD43D51.A%Y%j.006.?????????????.hdf'}
     
     
     ## Input dates
@@ -571,12 +618,26 @@ def get_all_filenames(**param):
         for d in df.index:
             root = path_dic[prod]['root']
             path_format = path_dic[prod]['format']
-            fpath = root/d.strftime(path_format)
-            if fpath.exists():
-                print(f"{prod.upper()} {d.strftime('%Y%m%d')} found.")
-                df.at[d, f'{prod}_path'] = fpath
+            
+            if prod=='modis': # Unpredictable part in MODIS file name, need to glob...
+                fpath = list(root.glob(d.strftime(path_format)))
+                if len(fpath)==1:
+                    fpath = fpath[0]
+                    print(f"{prod.upper()} {d:%Y%m%d} found.")
+                    df.at[d, f'{prod}_path'] = fpath
+                elif len(fpath)==0:
+                    print(f"{prod.upper()} {d:'%Y%m%d'} NOT found.")
+                else:
+                    print(f"{prod.upper()} {d:'%Y%m%d'} ERROR: several files found. Exiting.")
+                    sys.exit()
+
             else:
-                print(f"{prod.upper()} {d.strftime('%Y%m%d')} NOT found.")
+                fpath = root/d.strftime(path_format)
+                if fpath.exists():
+                    print(f"{prod.upper()} {d:%Y%m%d} found.")
+                    df.at[d, f'{prod}_path'] = fpath
+                else:
+                    print(f"{prod.upper()} {d:'%Y%m%d'} NOT found.")
     
     print(df)
 
@@ -617,6 +678,8 @@ def process_etal_series(**param):
     ## Create product objects
     mtalr = MSG(product='mtalr', var=interp_param['var'], slicing=slicing_msg, mask_type='land')   
     etalr = EPS(product='etalr', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
+    etal = EPS(product='etal', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
+    etal = EPS(product='etal', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
 
     res_bias = np.zeros_like(mtalr.shape, dtype=float)
     res_bias2 = np.zeros_like(mtalr.shape, dtype=float)
@@ -667,11 +730,15 @@ def process_etal_series(**param):
         ## DEBUG ON: show input data (disable to avoid loading input data if cache file already exists)
         if 1:
             if row['etalr_path'] is None:
-                p.imshow(np.zeros(etalr.shape), plot_param=blank, noaxis=True, **params, source='None')
+            #if row['etal_path'] is None:
+                p.imshow(np.zeros(etalr.shape), plot_param=blank, noaxis=False, **params, source='None')
+                #p.imshow(np.zeros(etal.shape), plot_param=blank, noaxis=False, **params, source='None')
                 continue
             
             etalr.get_data(row['etalr_path'], mask_value=-1)
-            p.imshow(etalr.data*0.0001, plot_param=albedo, noaxis=True, **params, source='etalr')
+            p.imshow(etalr.data*0.0001, plot_param=albedo, noaxis=False, **params, source='etalr')
+            #etal.get_data(row['etal_path'], mask_value=-1)
+            #p.imshow(etal.data*0.0001, plot_param=albedo, noaxis=False, **params, source='etal')
         ## DEBUG OFF
         else:
             if row['etalr_path'] is None:
@@ -1009,7 +1076,7 @@ if __name__=='__main__':
             'var' : ['AL-BB-BH'],
             #'start' : ['2015-01-05'],
             'start' : ['2007-01-05'],
-            #'end' : ['2015-12-25'],
+            #'end' : ['2017-12-25'],
             'end' : ['2009-12-25'],
             #'size' : [10],
            }
