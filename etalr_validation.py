@@ -20,157 +20,73 @@ import pandas as pd
 import pathlib
 
 
+#------------ INIT AND HELPER CLASSES AND FUNCTIONS --------------------
 
-"""
-TODO
-----
-- make a class SatelliteData with .lon, .lat and .var attribute. And after a MSG() and EPS() subclass.
-"""
-
-
-
-
-def load_msg_lonlat(stride=10, **param):
-    msg_lat_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision'
-    msg_lon_file = '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision'
-    #'hdf5_lsasaf_msg_lat_msg-disk_4bytesprecision'
-    #'hdf5_lsasaf_msg_lon_msg-disk_4bytesprecision'
-    #'hdf5_lsasaf_usgs-igbp_lwmask_msg-disk'
-   
-    if 1: # full disc
-        lat1, lat2 = None, None
-        lon1, lon2 = None, None
-    else: # zoom
-        lat1 = 900
-        lat2 = 980
-        lon1 = 2320
-        lon2 = 2400
-
-    with h5py.File(msg_lat_file, 'r') as flat:
-        lat = flat['LAT'][lat1:lat2:stride,lon1:lon2:stride]/10000.
-    with h5py.File(msg_lon_file, 'r') as flon:
-        lon = flon['LON'][lat1:lat2:stride,lon1:lon2:stride]/10000.
-    with h5py.File('hdf5_lsasaf_usgs-igbp_lwmask_msg-disk', 'r') as flwmask:
-        lwmask = flwmask['LWMASK'][lat1:lat2:stride,lon1:lon2:stride]
+def get_time_range(start, end, days=[], **param):
+    dseries = pd.date_range(start, end, freq='D')
     
-    out_shape = lwmask.shape
+    if len(days)>0:
+        #self.start_01 = self.start.replace(day=1)
+        #self.end_31 = self.end.replace(day=pd.Period(self.end, freq='D').days_in_month) # freq='xxx' is here just to avoid a bug
+        dseries = dseries[[d in days for d in dseries.day]]
 
-    if 0:
-        ## Set nan to non valid points
-        lat[lat==91.] = np.nan
-        print('min/max lat:', np.nanmin(lat), np.nanmax(lat))
-        lon[lon==91.] = np.nan
-        print('min/max lon:', np.nanmin(lon), np.nanmax(lon))
-    else:
-        ## Remove non valid points
-        valid_mask = np.where(lwmask==1)
-        lat = lat[valid_mask]
-        lon = lon[valid_mask]
-        print('min/max lat:', lat.min(), lat.max())
-        print('min/max lon:', lon.min(), lon.max())
+    return dseries
 
-    return lon, lat, valid_mask, out_shape
-
-
-def load_etal_lonlat_var(etal_file, stride=100, var=None, date=None, **param):
-
-    t0 = SimpleTimer()
-
-    # already discarding part of ETAL data that is for sure not in the MSG disk
-    if 1:
-        iLatStartEps = 850
-        iLatEndEps   = 17150 
-        iLonStartEps = 9000 
-        iLonEndEps   = 27000 
-    else: # zoom
-        #iLatStartEps = 6220
-        #iLatEndEps   = 6480 
-        #iLonStartEps = 19290 
-        #iLonEndEps   = 19530 
-        iLatStartEps = 5900
-        iLatEndEps   = 6900 
-        iLonStartEps = 18900 
-        iLonEndEps   = 19900 
+def get_all_filenames(**param):
+    path_dic = {}
+    path_dic['mtalr'] = {'root':pathlib.Path('/cnrm/vegeo/SAT/DATA/MSG/Reprocessed-on-2017/MTAL'),
+                              'format':'%Y/%m/%d/HDF5_LSASAF_MSG_ALBEDO-D10_MSG-Disk_%Y%m%d0000'}
+    #path_dic['etal']  = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL'),
+    #                          'format':'%Y/%m/%d/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_%Y%m%d0000'}
+    path_dic['etalr'] = {'root':pathlib.Path('/cnrm/vegeo/fransenr/CODES/DATA/NO_SAVE/EPS_Reprocess/ETAL'),
+                              'format':'%Y/%m/%d/HDF5_LSASAF_M02-AVHR_ETAL_GLOBE_%Y%m%d0000'}
+    path_dic['modis'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
+                              'format':'%Y/MCD43D51.A%Y%j.006.?????????????.hdf'}
     
-    lat_slice = slice(iLatStartEps, iLatEndEps, stride)
-    lon_slice = slice(iLonStartEps, iLonEndEps, stride)
-
-    print(f'--- Read {etal_file}...')
-    with h5py.File(etal_file,'r') as h5f:
-        etal_shape  = h5f[var].shape
-        etal = h5f[var][lat_slice, lon_slice]
-
-    ## Debug: set checkerboard
-    if 0:
-        etal = 6000*(np.indices(etal.shape).sum(axis=0) % 2)
-        print(etal)
-
-    ## Debug: plot input etal to image
-    if 0:
-        var_dic = {'data':etal, 'name':'etal'}
-        export_to_image(var_dic, vmin=0, vmax=6000)
-
-    t0('h5_slice')
-
-    ## Filter #1: discard non valid etal
-    ## Version without np.where is a bit quicker, you can test it with the following if:
-    if 1:
-        mask_valid = etal!=-1. # Discard points without valid albedo value (outside projection and in the ocean)
-        t0('mask_direct')
-    else:
-        mask_valid = np.where(etal!=-1.) # Discard points without valid albedo value (outside projection and in the ocean)
-        t0('mask_where')
-
-    print(mask_valid.shape)
-    s0 = etal.size
-    etal = etal[mask_valid]
-    s1= etal.size
-    print("--- {:.2f} % data masked".format(100*(s0-s1)/s0))
     
-    t0('mask_valid_etal')
+    ## Input dates
+    days = [5,15,25]
+    dseries = get_time_range(**param, days=days)
+    print(dseries)
+    print(len(dseries))
+    print(param_to_string(param))
     
-    ## Get lonlat from file (quicker than creating them manually when no downsampling is used)
-    if 1:
-        metop_lonlat_file = '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
-        with h5py.File(metop_lonlat_file, 'r') as flonlat:
-            lon = flonlat['lon'][lat_slice, lon_slice][mask_valid]
-            lat = flonlat['lat'][lat_slice, lon_slice][mask_valid]
+    ## Init main dataframe with desired dates
+    empty_list = [None]*len(dseries)
+    #df = pd.DataFrame({'date': dseries, 'etal_path':empty_list, 'mtalr_path':empty_list})
+    df = pd.DataFrame({'date': dseries, **{f'{k}_path':empty_list for k in path_dic.keys()}})
+    df = df.set_index('date')
+    print(df)
+
+    ## Check paths and fill the dataframe with valids
+    for prod in path_dic.keys():
+        for d in df.index:
+            root = path_dic[prod]['root']
+            path_format = path_dic[prod]['format']
+            
+            if prod=='modis': # Unpredictable part in MODIS file name, need to glob...
+                fpath = list(root.glob(d.strftime(path_format)))
+                if len(fpath)==1:
+                    fpath = fpath[0]
+                    print(f"{prod.upper()} {d:%Y%m%d} found.")
+                    df.at[d, f'{prod}_path'] = fpath
+                elif len(fpath)==0:
+                    print(f"{prod.upper()} {d:'%Y%m%d'} NOT found.")
+                else:
+                    print(f"{prod.upper()} {d:'%Y%m%d'} ERROR: several files found. Exiting.")
+                    sys.exit()
+
+            else: # EPS and MSG file names are predictable.
+                fpath = root/d.strftime(path_format)
+                if fpath.exists():
+                    print(f"{prod.upper()} {d:%Y%m%d} found.")
+                    df.at[d, f'{prod}_path'] = fpath
+                else:
+                    print(f"{prod.upper()} {d:'%Y%m%d'} NOT found.")
     
-        #lon, lat = load_etal_lonlat(lat_slice, lon_slice, mask=mask_valid)
-    
-    ## Create lonlat coords manually for etal sinusoidal projection
-    else:
-        lon = np.linspace(-180, 180, etal_shape[1])[iLonStartEps:iLonEndEps:stride]
-        lat = np.linspace(90, -90, etal_shape[0])[iLatStartEps:iLatEndEps:stride]
+    print(df)
 
-        lon, lat = np.meshgrid(lon,lat)
-        lon = lon/np.cos(np.deg2rad(lat))
-
-        lon = lon[mask_nonvalid] 
-        lat = lat[mask_nonvalid]
-    
-    print('min/max lat:', lat.min(), lat.max())
-    print('min/max lon:', lon.min(), lon.max())
-
-    t0('mask_nonvalid_lonlat')
-
-    mask_fov = np.logical_and(np.abs(lon)<81, np.abs(lat)<81)  
-    lon = lon[mask_fov] 
-    lat = lat[mask_fov]
-    etal = etal[mask_fov]
-    s1= lon.size
-    print("--- {:.2f} % data masked".format(100*(s0-s1)/s0))
-    print('min/max lat:', lat.min(), lat.max())
-    print('min/max lon:', lon.min(), lon.max())
-
-    t0('mask_fov')
-
-    dic_var = {var:etal}
-
-    t0.show()
-
-    return lon, lat, dic_var
-
+    return df
 
 def param_to_string(param, sep1='_', sep2='-', shorten=False):
     """
@@ -191,6 +107,17 @@ def param_to_string(param, sep1='_', sep2='-', shorten=False):
     delchars = ''.join(c for c in map(chr, range(256)) if not c.isalnum())
     param_str = sep1.join([f"{k}{sep2}{str(v).translate(str.maketrans('','',delchars))}" for k,v in param.items()])
     return param_str
+
+def print_stats(*arrays, label=None, fmt='{:.2f}'):
+    res = []
+    for ida,a in enumerate(arrays):
+        if label is None:
+            new = str(ida)
+        else:
+            new = label[ida]
+        res.append(pd.DataFrame(a.ravel()).describe().applymap(fmt.format).rename(columns={0:new}))
+    res = pd.concat(res, axis=1)
+    print(res)
 
 
 class Plots:
@@ -272,45 +199,7 @@ class Plots:
         self.ax.yaxis.set_major_locator(plt.NullLocator())
         self.fig.savefig(filepath, pad_inches=0, bbox_inches='tight', dpi=dpi)
 
-def get_time_range(start, end, days=[], **param):
-    dseries = pd.date_range(start, end, freq='D')
-    
-    if len(days)>0:
-        #self.start_01 = self.start.replace(day=1)
-        #self.end_31 = self.end.replace(day=pd.Period(self.end, freq='D').days_in_month) # freq='xxx' is here just to avoid a bug
-        dseries = dseries[[d in days for d in dseries.day]]
-
-    return dseries
-
-def interpolate_etal_to_msg(etal_file, **param):
-        ti = SimpleTimer()
-
-        print('### MSG  extraction (target)')
-        msg_lon, msg_lat, msg_valid_mask, msg_shape = load_msg_lonlat(stride=1)
-        ti('read MSG')
-        
-        print('### ETAL extraction (source)')
-        etal_lon, etal_lat, etal_dic_var = load_etal_lonlat_var(etal_file, stride=1, **param)
-        ti('read ETAL')
-
-        print('### Interpolation')
-        interp = vtk_interpolation(**param) 
-        ti('interp init')
-        interp.set_source(etal_lon, etal_lat, etal_dic_var)
-        ti('interp set_source')
-        interp.set_target(msg_lon, msg_lat)
-        ti('interp set_destination')
-        interp.run()
-        ti('interp run')
-        interp_var = interp.get_output()
-        ti('interp get_output')
-
-        data = np.zeros(msg_shape)-1.
-        data[msg_valid_mask] = interp_var[param['var']]
-        
-        export_to_h5(data, 'etal2msg', **param)
-        
-        return data
+#------------ SATELLITE CLASSES FOR DATA PROCESSING ----------------
 
 class SatelliteTools:
     def __init__(self, product, var, slicing=slice(None)):
@@ -511,10 +400,6 @@ class MODIS(SatelliteTools):
             self.data[self.mask] = self.data0[self.mask]
         self.ti('get_data')
 
-    #def load_hdf_var(self, data_file, var, slicing):
-    #    with h5py.File(data_file,'r') as h5f:
-    #        self.data0 = h5f[var][slicing]
-
 class EPS(SatelliteTools):
     def __init__(self, product, var, slicing=slice(None), mask_type='land'):
         
@@ -553,10 +438,6 @@ class EPS(SatelliteTools):
             self.data[self.mask] = self.data0[self.mask]
         self.ti('get_data')
 
-    #def load_hdf_var(self, data_file, var, slicing):
-    #    with h5py.File(data_file,'r') as h5f:
-    #        self.data0 = h5f[var][slicing]
-
 class MSG(SatelliteTools):
     def __init__(self, product, var, slicing=slice(None), mask_type='land'):
 
@@ -577,62 +458,8 @@ class MSG(SatelliteTools):
         self.data = None
         
 
-def get_all_filenames(**param):
-    path_dic = {}
-    path_dic['mtalr'] = {'root':pathlib.Path('/cnrm/vegeo/SAT/DATA/MSG/Reprocessed-on-2017/MTAL'),
-                              'format':'%Y/%m/%d/HDF5_LSASAF_MSG_ALBEDO-D10_MSG-Disk_%Y%m%d0000'}
-    #path_dic['etal']  = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL'),
-    #                          'format':'%Y/%m/%d/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_%Y%m%d0000'}
-    path_dic['etalr'] = {'root':pathlib.Path('/cnrm/vegeo/fransenr/CODES/DATA/NO_SAVE/EPS_Reprocess/ETAL'),
-                              'format':'%Y/%m/%d/HDF5_LSASAF_M02-AVHR_ETAL_GLOBE_%Y%m%d0000'}
-    path_dic['modis'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
-                              'format':'%Y/MCD43D51.A%Y%j.006.?????????????.hdf'}
-    
-    
-    ## Input dates
-    days = [5,15,25]
-    dseries = get_time_range(**param, days=days)
-    print(dseries)
-    print(len(dseries))
-    print(param_to_string(param))
-    
-    ## Init main dataframe with desired dates
-    empty_list = [None]*len(dseries)
-    #df = pd.DataFrame({'date': dseries, 'etal_path':empty_list, 'mtalr_path':empty_list})
-    df = pd.DataFrame({'date': dseries, **{f'{k}_path':empty_list for k in path_dic.keys()}})
-    df = df.set_index('date')
-    print(df)
 
-    ## Check paths and fill the dataframe with valids
-    for prod in path_dic.keys():
-        for d in df.index:
-            root = path_dic[prod]['root']
-            path_format = path_dic[prod]['format']
-            
-            if prod=='modis': # Unpredictable part in MODIS file name, need to glob...
-                fpath = list(root.glob(d.strftime(path_format)))
-                if len(fpath)==1:
-                    fpath = fpath[0]
-                    print(f"{prod.upper()} {d:%Y%m%d} found.")
-                    df.at[d, f'{prod}_path'] = fpath
-                elif len(fpath)==0:
-                    print(f"{prod.upper()} {d:'%Y%m%d'} NOT found.")
-                else:
-                    print(f"{prod.upper()} {d:'%Y%m%d'} ERROR: several files found. Exiting.")
-                    sys.exit()
-
-            else: # EPS and MSG file names are predictable.
-                fpath = root/d.strftime(path_format)
-                if fpath.exists():
-                    print(f"{prod.upper()} {d:%Y%m%d} found.")
-                    df.at[d, f'{prod}_path'] = fpath
-                else:
-                    print(f"{prod.upper()} {d:'%Y%m%d'} NOT found.")
-    
-    print(df)
-
-    return df
-
+#------------ MAIN FUNCTIONS -------------
 
 def process_etal_series(**param):
 
@@ -854,12 +681,7 @@ def process_etal_series(**param):
     p.imshow(np.sqrt(res_bias2-res_bias**2), plot_param=albedo_biasstd, **param2, source='biasSTD'+source_ref+source_vtk)
 
     
-    ## Init empty data containers to store results
-    # temporal domain (10x10 km area)
-    # spatial domain (global bias map)
-
-
-def process_etal_series_OLD(**param):
+def process_etal_series_BACKUP(**param):
 
     df = get_all_filenames(**param)
 
@@ -1019,33 +841,11 @@ def process_etal_series_OLD(**param):
     p.imshow(res_bias, plot_param=albedo_diff, **param2, source='bias'+source_ref+source_vtk)
     p.imshow(np.sqrt(res_bias2-res_bias**2), plot_param=albedo_biasstd, **param2, source='biasSTD'+source_ref+source_vtk)
 
-    
-    ## Init empty data containers to store results
-    # temporal domain (10x10 km area)
-    # spatial domain (global bias map)
-
-def print_stats(*arrays, label=None, fmt='{:.2f}'):
-    res = []
-    for ida,a in enumerate(arrays):
-        if label is None:
-            new = str(ida)
-        else:
-            new = label[ida]
-        res.append(pd.DataFrame(a.ravel()).describe().applymap(fmt.format).rename(columns={0:new}))
-    res = pd.concat(res, axis=1)
-    print(res)
-
 def main(param):
-
     ti = SimpleTimer()
 
-    if 1:
-        process_etal_series(**param)        
+    process_etal_series(**param)        
     
-    ## Load cache file
-    else:
-        data = load_h5(**param)
-
     ti.show()
 
 def combine_param(param_dic):
