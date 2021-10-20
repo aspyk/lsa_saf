@@ -8,6 +8,8 @@ bla*.png
 *.out
 *.vtu
 *.h5
+*.mp4
+*.gif
 ###
 
 # Byte-compiled / optimized / DLL files
