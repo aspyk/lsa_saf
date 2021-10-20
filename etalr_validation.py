@@ -212,11 +212,9 @@ class Plots:
     def initialize(self):
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111)
-    
 
-
-    def imshow(self, data, plot_param={}, noaxis=False, **param):
-        self.type = 'imshow'
+    def imshow(self, data, plot_param={}, show_axis=True, dpi='figure', **param):
+        self.type = 'imshow' 
         self.initialize()
 
         data = data[self.lat,self.lon]
@@ -226,7 +224,7 @@ class Plots:
 
         cb = plt.colorbar(ims, cax=cax)
         
-        self.finalize(noaxis, **param)
+        self.finalize(show_axis, dpi, **param)
 
     def scatter(self, data1, data2, plot_param={}, noaxis=False, **param):
         self.type = 'scatter' 
@@ -248,21 +246,21 @@ class Plots:
 
         self.finalize(noaxis, **param)
 
-    def finalize(self, noaxis=False, **param):
+    def finalize(self, show_axis=True, dpi='figure', **param):
         from textwrap import wrap
         param_str = '\n'.join(wrap(param_to_string(param, sep1=' | ', sep2=':'), 60))
         self.ax.set_title(param_str, fontsize=10 )
         plt.tight_layout()
         
         im_name = f"res_proj2vtk_{self.type}_{param_to_string(param, shorten=True)}.png"
-        if noaxis:
-            self.save_no_whitespace(im_name)
+        if show_axis:
+            plt.savefig(im_name, bbox_inches='tight', dpi=dpi)
         else:
-            plt.savefig(im_name, bbox_inches='tight')
+            self.save_no_whitespace(im_name, dpi)
         print(f"--- Output image saved to: {im_name}")
         plt.close(self.fig)
    
-    def save_no_whitespace(self, filepath):
+    def save_no_whitespace(self, filepath, dpi='figure'):
         '''Save the current image with no whitespace'''
         plt.subplots_adjust(0,0,1,1,0,0)
         if len(self.fig.axes)==2:
@@ -272,7 +270,7 @@ class Plots:
         self.ax.margins(0,0)
         self.ax.xaxis.set_major_locator(plt.NullLocator())
         self.ax.yaxis.set_major_locator(plt.NullLocator())
-        self.fig.savefig(filepath, pad_inches=0, bbox_inches='tight', dpi=200)
+        self.fig.savefig(filepath, pad_inches=0, bbox_inches='tight', dpi=dpi)
 
 def get_time_range(start, end, days=[], **param):
     dseries = pd.date_range(start, end, freq='D')
@@ -336,6 +334,10 @@ class SatelliteTools:
             with h5py.File(self.ground_mask_conf['file'], 'r') as flw:
                 self._full_shape = flw[self.ground_mask_conf['var']].shape
         return self._full_shape
+
+    @full_shape.setter
+    def full_shape(self, value):
+        self._full_shape = value
 
     @property
     def shape(self):
@@ -476,13 +478,13 @@ class MODIS(SatelliteTools):
 
         self.ti = SimpleTimer()
 
-        self.ground_mask_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL/etal_lwmask.h5',
+        self.ground_mask_conf = {'file': None,
                                  'var': 'lwmask',
                                  'type': mask_type}
-        self.lat_conf = {'file': '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc',
+        self.lat_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lat_modis.h5',
                          'var': 'lat',
                          'scaling': 1.}
-        self.lon_conf = {'file': '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc',
+        self.lon_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lon_modis.h5',
                          'var': 'lon',
                          'scaling': 1.}
 
@@ -497,8 +499,10 @@ class MODIS(SatelliteTools):
         """
         self.ti()
         print(f'--- Read {self.product.upper()}/{self.var} in {data_file} ...')
-        with h5py.File(data_file,'r') as h5f:
-            self.data0 = h5f[self.var][self.slicing]
+        h4f = SD(data_file.as_posix(), SDC.READ)
+        self.full_shape = (h4f.select(self.var).dimensions()['YDim:Grid_Parameter'], h4f.select(self.var).dimensions()['XDim:Grid_Parameter'])
+        self.data0 = h4f.select(self.var)[self.slicing] 
+        self.data0[self.data0==32767] = -1
         self.mask = self.ground_mask & (self.data0!=-1)
         if mask_value is None:
             self.data = self.data0[self.mask]
@@ -507,9 +511,9 @@ class MODIS(SatelliteTools):
             self.data[self.mask] = self.data0[self.mask]
         self.ti('get_data')
 
-    def load_hdf_var(self, data_file, var, slicing):
-        with h5py.File(data_file,'r') as h5f:
-            self.data0 = h5f[var][slicing]
+    #def load_hdf_var(self, data_file, var, slicing):
+    #    with h5py.File(data_file,'r') as h5f:
+    #        self.data0 = h5f[var][slicing]
 
 class EPS(SatelliteTools):
     def __init__(self, product, var, slicing=slice(None), mask_type='land'):
@@ -549,9 +553,9 @@ class EPS(SatelliteTools):
             self.data[self.mask] = self.data0[self.mask]
         self.ti('get_data')
 
-    def load_hdf_var(self, data_file, var, slicing):
-        with h5py.File(data_file,'r') as h5f:
-            self.data0 = h5f[var][slicing]
+    #def load_hdf_var(self, data_file, var, slicing):
+    #    with h5py.File(data_file,'r') as h5f:
+    #        self.data0 = h5f[var][slicing]
 
 class MSG(SatelliteTools):
     def __init__(self, product, var, slicing=slice(None), mask_type='land'):
@@ -572,20 +576,6 @@ class MSG(SatelliteTools):
 
         self.data = None
         
-
-def get_modis_on_etal(modis_path, slicing=None, **param):
-    """If cache file exists, load it, otherwise interpolate"""
-    for k,v in param.items():
-        print(f'{k}:{v}')
-    
-    ## Cache files are  stored in working directory for now
-    h5_path = pathlib.Path(f"cache_modis2etal_{param_to_string(param)}.h5")
-    data = load_h5_var(h5_path, param['var'], slicing)
-    if data is not None:
-        return data
-
-    else:
-        return interpolate_modis_to_etal(modis_path, **param)
 
 def get_all_filenames(**param):
     path_dic = {}
@@ -631,7 +621,7 @@ def get_all_filenames(**param):
                     print(f"{prod.upper()} {d:'%Y%m%d'} ERROR: several files found. Exiting.")
                     sys.exit()
 
-            else:
+            else: # EPS and MSG file names are predictable.
                 fpath = root/d.strftime(path_format)
                 if fpath.exists():
                     print(f"{prod.upper()} {d:%Y%m%d} found.")
@@ -650,13 +640,14 @@ def process_etal_series(**param):
 
     ## Get ETAL on MSG grid 
     interp_param = {
-            'var' : 'AL-BB-BH',
+            #'var' : 'AL-BB-BH',
+            'var' : 'BRDF_Albedo_BSA_Shortwave',
             'kernel' : 'inverse_distance',
             #'kernel' : ['mean','inverse_distance','gaussian'],
-            #'radius' : [5,10],
             'radius' : 5,
-            'null_points' : 'closest',
-            #'null_points' : -1.,
+            #'radius' : 200,
+            #'null_points' : 'closest',
+            'null_points' : -1.,
            }
 
     ## Data accumulation
@@ -665,7 +656,8 @@ def process_etal_series(**param):
     if 1:
         #slicing_msg = (slice(None, None, 2), slice(None, None, 2))
         slicing_msg = (slice(None), slice(None))
-        slicing_eps = (slice(None, None, 10), slice(None, None, 10))
+        slicing_eps = (slice(None, None, 2), slice(None, None, 2))
+        slicing_modis = (slice(None, None, 2), slice(None, None, 2))
         #slicing_eps = (slice(850, 17150, 1), slice(9000, 27000, 1)) # Remove points not on MSG disc
         #slicing = (slice(380, 480), slice(1950, 2050)) # France
         #slicing = (slice(50, 700), slice(1550, 3250)) # Euro
@@ -679,14 +671,17 @@ def process_etal_series(**param):
     mtalr = MSG(product='mtalr', var=interp_param['var'], slicing=slicing_msg, mask_type='land')   
     etalr = EPS(product='etalr', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
     etal = EPS(product='etal', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
-    etal = EPS(product='etal', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
+    # bsa_sw = black sky albedo shortwave
+    modis = MODIS(product='bsa-sw', var='BRDF_Albedo_BSA_Shortwave', slicing=slicing_modis, mask_type=None)   
 
+    ## Init statistical arrays
     res_bias = np.zeros_like(mtalr.shape, dtype=float)
     res_bias2 = np.zeros_like(mtalr.shape, dtype=float)
     nbias = 0
 
     ## Plot params
     albedo = {'cmap':'jet', 'vmin':0, 'vmax':0.6}
+    albedo_modis = {'cmap':'jet'}
     blank = {'cmap':'binary', 'vmin':0, 'vmax':0.6}
     albedo_diff = {'cmap':'seismic', 'vmin':-0.15, 'vmax':0.15}
     albedo_biasstd = {'cmap':'jet', 'vmin':0.0, 'vmax':0.08}
@@ -694,7 +689,7 @@ def process_etal_series(**param):
     source_ref = 'RefMTALR'
     p = Plots(zoom=0)
 
-    # Recursive plot
+    ## Setup recursive plot
     rec_plot = 1
     if rec_plot:
         #recfig = plt.figure()
@@ -728,32 +723,42 @@ def process_etal_series(**param):
         params['date'] = f'{index:%Y%m%d}'
 
         ## DEBUG ON: show input data (disable to avoid loading input data if cache file already exists)
-        if 1:
-            if row['etalr_path'] is None:
+        if 0:
+            if row['modis_path'] is None:
+            #if row['etalr_path'] is None:
             #if row['etal_path'] is None:
-                p.imshow(np.zeros(etalr.shape), plot_param=blank, noaxis=False, **params, source='None')
-                #p.imshow(np.zeros(etal.shape), plot_param=blank, noaxis=False, **params, source='None')
+                #p.imshow(np.zeros(etalr.shape), plot_param=blank, show_axis=True, **params, source='None')
+                #p.imshow(np.zeros(etal.shape), plot_param=blank, show_axis=True, **params, source='None')
+                p.imshow(np.zeros(modis.shape), plot_param=blank, show_axis=True, **params, source='None')
                 continue
             
-            etalr.get_data(row['etalr_path'], mask_value=-1)
-            p.imshow(etalr.data*0.0001, plot_param=albedo, noaxis=False, **params, source='etalr')
+            #etalr.get_data(row['etalr_path'], mask_value=-1)
+            #p.imshow(etalr.data*0.0001, plot_param=albedo, show_axis=True, **params, source='etalr')
+
+            modis.get_data(row['modis_path'], mask_value=-1)
+            p.imshow(modis.data*0.001, plot_param=albedo, show_axis=True, **params, source='modis')
+
             #etal.get_data(row['etal_path'], mask_value=-1)
-            #p.imshow(etal.data*0.0001, plot_param=albedo, noaxis=False, **params, source='etal')
+            #p.imshow(etal.data*0.0001, plot_param=albedo, show_axis=True, **params, source='etal')
+
         ## DEBUG OFF
         else:
-            if row['etalr_path'] is None:
+            #if row['etalr_path'] is None:
+            if row['modis_path'] is None:
                 print('--- No data file found for this date.')
                 tglob(params['id'])
                 continue
 
         #etalr_on_msg = etalr.interpolate_on(mtalr, source_file=row['etalr_path'], use_cache=True, date=params['date'], **interp_param)
+        modis_on_eps = modis.interpolate_on(etalr, source_file=row['modis_path'], use_cache=False, date=params['date'], **interp_param)
 
-        if 0:
-            p.imshow(etalr_on_msg*0.0001, plot_param=albedo, noaxis=False, **params, **interp_param, source=source_vtk)
+        if 1:
+            #p.imshow(etalr_on_msg*0.0001, plot_param=albedo, show_axis=True, **params, **interp_param, source=source_vtk)
+            p.imshow(modis_on_eps*0.001, plot_param=albedo, show_axis=True, dpi=200, **params, **interp_param, source='modis-vtk')
 
         tglob(params['id'])
 
-        if (i==6) & 0:
+        if (i==36) & 0:
             print('--- BREAK LOOP')
             break
 
@@ -820,7 +825,7 @@ def process_etal_series(**param):
             #x = np.random.normal(nbias, 0.04, size=len(bias.ravel()))
             #recax.scatter(x, bias.ravel(), alpha=0.2)
 
-            if (nbias == 4) and 1:
+            if (nbias == 18) and 1:
                 break
 
     if rec_plot:
@@ -1073,7 +1078,8 @@ def combine_param(param_dic):
 if __name__=='__main__':
     
     test = {
-            'var' : ['AL-BB-BH'],
+            #'var' : ['AL-BB-BH'],
+            'var' : ['BRDF_Albedo_BSA_Shortwave'],
             #'start' : ['2015-01-05'],
             'start' : ['2007-01-05'],
             #'end' : ['2017-12-25'],
