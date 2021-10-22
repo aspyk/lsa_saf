@@ -19,7 +19,6 @@ from vtk_tools import vtk_interpolation
 import pandas as pd
 import pathlib
 
-
 #------------ INIT AND HELPER CLASSES AND FUNCTIONS --------------------
 
 def get_time_range(start, end, days=[], **param):
@@ -40,7 +39,8 @@ def get_all_filenames(**param):
     #                          'format':'%Y/%m/%d/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_%Y%m%d0000'}
     path_dic['etalr'] = {'root':pathlib.Path('/cnrm/vegeo/fransenr/CODES/DATA/NO_SAVE/EPS_Reprocess/ETAL'),
                               'format':'%Y/%m/%d/HDF5_LSASAF_M02-AVHR_ETAL_GLOBE_%Y%m%d0000'}
-    path_dic['modis'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
+    #path_dic['modis'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
+    path_dic['bsa-sw'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
                               'format':'%Y/MCD43D51.A%Y%j.006.?????????????.hdf'}
     
     
@@ -64,7 +64,8 @@ def get_all_filenames(**param):
             root = path_dic[prod]['root']
             path_format = path_dic[prod]['format']
             
-            if prod=='modis': # Unpredictable part in MODIS file name, need to glob...
+            #if prod=='modis': # Unpredictable part in MODIS file name, need to glob...
+            if 'MODIS' in root.as_posix(): # Unpredictable part in MODIS file name, need to glob...
                 fpath = list(root.glob(d.strftime(path_format)))
                 if len(fpath)==1:
                     fpath = fpath[0]
@@ -118,7 +119,6 @@ def print_stats(*arrays, label=None, fmt='{:.2f}'):
         res.append(pd.DataFrame(a.ravel()).describe().applymap(fmt.format).rename(columns={0:new}))
     res = pd.concat(res, axis=1)
     print(res)
-
 
 class Plots:
 
@@ -282,11 +282,12 @@ class SatelliteTools:
                 self._lon = fl[self.lon_conf['var']][self.slicing]*self.lon_conf['scaling']
         return self._lon[self.mask]
 
-    def interpolate_on(self, target, source_file, use_cache, **param):
+    def interpolate_on(self, target, source_file, use_cache, cache_slicing=slice(None), **param):
         """If cache file exists, load it, otherwise interpolate"""
         
+        print('Interpolation parameters:')
         for k,v in param.items():
-            print(f'{k}:{v}')
+            print(f'    {k}:{v}')
 
         interp_type = f'{self.product}2{type(target).__name__}'
 
@@ -294,9 +295,9 @@ class SatelliteTools:
         if use_cache:
             ## Cache files are  stored in working directory for now
             h5_path = pathlib.Path(f"./cache/cache_{interp_type}_{param_to_string(param)}.h5")
-            #data = self.load_h5_cache(h5_path, param['var'], target.slicing)
-            data = self.load_h5_cache(h5_path, param['var']) # return cache as it without slicing (cache may have already been sliced)
+            data = self.load_h5_cache(h5_path, param['var'], cache_slicing)
             if data is not None:
+                self.data_interp = data
                 return data
             else:
                 interpolation_required = True
@@ -315,6 +316,7 @@ class SatelliteTools:
             ti('interp set_source')
             interp.set_target(target.lon, target.lat)
             ti('interp set_destination')
+            print(f'--- Interpolate {self.lon.size} source pts on {target.lon.size} target pts')
             interp.run()
             ti('interp run')
             interp_var = interp.get_output()
@@ -322,9 +324,13 @@ class SatelliteTools:
 
             ## Extract and save data
             data = np.full(target.shape, -1.)
+            ti('interp np_full')
             data[target.ground_mask] = interp_var[param['var']]
+            ti('interp fill_with_mask')
             self.export_to_h5(data, interp_type, **param)
+            ti('interp export_to_h5')
             
+            self.data_interp = data
             return data
 
     def export_to_h5(self, data, name, **param):
@@ -344,9 +350,9 @@ class SatelliteTools:
 
     def load_h5_cache(self, h5_path, var, slicing=slice(None)):
         if h5_path.is_file():
+            print(f"--- Read h5 from: {h5_path} ...")
             with h5py.File(h5_path, 'r') as h5_file:
                 data = h5_file[var][slicing]
-            print(f"--- Read h5 from: {h5_path}")
             return data
         else:
             print(f"--- File: {h5_path} not found.")
@@ -361,7 +367,7 @@ class SatelliteTools:
     
 
 class MODIS(SatelliteTools):
-    def __init__(self, product, var, slicing=slice(None), mask_type='land'):
+    def __init__(self, product, var, slicing=slice(None), mask_type=None):
         
         super().__init__(product, var, slicing)
 
@@ -437,6 +443,7 @@ class EPS(SatelliteTools):
             self.data = np.zeros(self.shape) + mask_value
             self.data[self.mask] = self.data0[self.mask]
         self.ti('get_data')
+        return self.data
 
 class MSG(SatelliteTools):
     def __init__(self, product, var, slicing=slice(None), mask_type='land'):
@@ -483,8 +490,8 @@ def process_etal_series(**param):
     if 1:
         #slicing_msg = (slice(None, None, 2), slice(None, None, 2))
         slicing_msg = (slice(None), slice(None))
-        slicing_eps = (slice(None, None, 2), slice(None, None, 2))
-        slicing_modis = (slice(None, None, 2), slice(None, None, 2))
+        slicing_eps = (slice(None, None, 10), slice(None, None, 10))
+        slicing_modis = (slice(None, None, 1), slice(None, None, 1))
         #slicing_eps = (slice(850, 17150, 1), slice(9000, 27000, 1)) # Remove points not on MSG disc
         #slicing = (slice(380, 480), slice(1950, 2050)) # France
         #slicing = (slice(50, 700), slice(1550, 3250)) # Euro
@@ -495,15 +502,30 @@ def process_etal_series(**param):
         interp_param['string_exclude'] = ['slicing']
 
     ## Create product objects
-    mtalr = MSG(product='mtalr', var=interp_param['var'], slicing=slicing_msg, mask_type='land')   
-    etalr = EPS(product='etalr', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
-    etal = EPS(product='etal', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
-    # bsa_sw = black sky albedo shortwave
+    mtalr = MSG(product='mtalr', var='AL-BB-BH', slicing=slicing_msg, mask_type='land')   
+    etalr = EPS(product='etalr', var='AL-BB-BH', slicing=slicing_eps, mask_type='land')   
+    #etal = EPS(product='etal', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
+    # bsa-sw = black sky albedo shortwave
     modis = MODIS(product='bsa-sw', var='BRDF_Albedo_BSA_Shortwave', slicing=slicing_modis, mask_type=None)   
 
+    compare_two(new=etalr, ref=modis, grid='new', df_paths=df, **interp_param)
+
+
+def compare_two(new, ref, grid, df_paths, **interp_param):
+
+    if grid=='new':
+        source = ref
+        target = new
+    elif grid=='ref':
+        source = new
+        target = ref
+    else:
+        print("--- ERROR: wrong grid parameter ('new' or 'ref')")
+        sys.exit()
+
     ## Init statistical arrays
-    res_bias = np.zeros_like(mtalr.shape, dtype=float)
-    res_bias2 = np.zeros_like(mtalr.shape, dtype=float)
+    res_bias = np.zeros(target.shape, dtype=float)
+    res_bias2 = np.zeros(target.shape, dtype=float)
     nbias = 0
 
     ## Plot params
@@ -512,8 +534,8 @@ def process_etal_series(**param):
     blank = {'cmap':'binary', 'vmin':0, 'vmax':0.6}
     albedo_diff = {'cmap':'seismic', 'vmin':-0.15, 'vmax':0.15}
     albedo_biasstd = {'cmap':'jet', 'vmin':0.0, 'vmax':0.08}
-    source_vtk = 'VtkETAL'
-    source_ref = 'RefMTALR'
+    source_name = 'Vtk' + source.product.upper()
+    target_name = target.product.upper()
     p = Plots(zoom=0)
 
     ## Setup recursive plot
@@ -542,12 +564,17 @@ def process_etal_series(**param):
 
     tglob = SimpleTimer()
 
-    for i, (index,row) in enumerate(df.iterrows()):
+    for i, (index,row) in enumerate(df_paths.iterrows()):
         print(f'\n================ {index:%Y-%m-%d} ================')
 
         params = {}
         params['id'] = f'{i:03d}'
         params['date'] = f'{index:%Y%m%d}'
+
+        if (row[f'{source.product}_path'] is None) or (row[f'{target.product}_path'] is None):
+            print('--- Data file(s) not found for this date.')
+            tglob(params['id'])
+            continue
 
         ## DEBUG ON: show input data (disable to avoid loading input data if cache file already exists)
         if 0:
@@ -568,71 +595,49 @@ def process_etal_series(**param):
             #etal.get_data(row['etal_path'], mask_value=-1)
             #p.imshow(etal.data*0.0001, plot_param=albedo, show_axis=True, **params, source='etal')
 
-        ## DEBUG OFF
-        else:
-            #if row['etalr_path'] is None:
-            if row['modis_path'] is None:
-                print('--- No data file found for this date.')
-                tglob(params['id'])
-                continue
+        source_on_target_grid = source.interpolate_on(target, source_file=row[f'{source.product}_path'],
+                                                    use_cache=True, cache_slicing=target.slicing, date=params['date'], **interp_param)
+        target_on_target_grid = target.get_data(row[f'{target.product}_path'], mask_value=-1)
 
-        #etalr_on_msg = etalr.interpolate_on(mtalr, source_file=row['etalr_path'], use_cache=True, date=params['date'], **interp_param)
-        modis_on_eps = modis.interpolate_on(etalr, source_file=row['modis_path'], use_cache=False, date=params['date'], **interp_param)
+        print_stats(source_on_target_grid, target_on_target_grid, label=['source.product', 'target.product'])
 
-        if 1:
+        ## Filtering
+        source_on_target_grid[target_on_target_grid==-1] = -1
+        target_on_target_grid[source_on_target_grid==-1] = -1
+        source_on_target_grid = source_on_target_grid*0.001
+        target_on_target_grid = target_on_target_grid*0.0001
+        # Note: var *= 0.001 does not work if not the same type (ex var has int and 0.001 is float)
+
+        print(f'{source.product}:',np.count_nonzero(source_on_target_grid<0),
+              f'{target.product}:', np.count_nonzero(target_on_target_grid<0))
+
+        if 0:
             #p.imshow(etalr_on_msg*0.0001, plot_param=albedo, show_axis=True, **params, **interp_param, source=source_vtk)
             p.imshow(modis_on_eps*0.001, plot_param=albedo, show_axis=True, dpi=200, **params, **interp_param, source='modis-vtk')
 
-        tglob(params['id'])
 
-        if (i==36) & 0:
-            print('--- BREAK LOOP')
-            break
-
-    tglob.show()
-    sys.exit()
-
-    for index,row in df.iterrows():
-        if (row['etalr_path'] is None) or (row['mtalr_path'] is None):
-            continue
-
-        etal = ETAL(slicing, interp_param['var'])
-        etal.get_data(row['etal_path'])
-        etal.get_latlon()
-        etal.describe()
-        sys.exit()
-
-        interp_param['date'] = index.strftime('%Y%m%d')
-        etal_on_msg = get_etal_on_msg(row['etal_path'], **interp_param)
-        mtalr_on_msg = load_mtalr(row['mtalr_path'],  **interp_param)
-        
-        # Filtering
-        mtalr_on_msg[nonvalid_mask] = -1
-        mtalr_on_msg[etal_on_msg==-1] = -1
-        etal_on_msg[mtalr_on_msg==-1] = -1
-        mtalr_on_msg = mtalr_on_msg*0.0001
-        etal_on_msg = etal_on_msg*0.0001
-
-        print('mtalr:',np.count_nonzero(mtalr_on_msg<0), 'etal:', np.count_nonzero(etal_on_msg<0))
-
-        # Compute bias
-        bias = mtalr_on_msg-etal_on_msg
+        ## Compute bias
+        bias = source_on_target_grid - target_on_target_grid
+        print(bias.shape)
+        print(res_bias.shape)
         res_bias += bias
         res_bias2 += bias*bias
         nbias += 1
-        print_stats(mtalr_on_msg, etal_on_msg, label=['mtalr', 'etal'])
 
-        if 1:
-            p.imshow(etal_on_msg, plot_param=albedo, noaxis=True, **interp_param, source=source_vtk)
-            p.imshow(mtalr_on_msg, plot_param=albedo, noaxis=True, var=interp_param['var'], date=interp_param['date'], source=source_ref)
+        ## Plot global maps
+        if 0:
+            p.imshow(source_on_target_grid, plot_param=albedo, noaxis=True, **interp_param, source=source_vtk)
+            p.imshow(source_on_target_grid, plot_param=albedo, noaxis=True, var=interp_param['var'], date=interp_param['date'], source=source_ref)
             p.imshow(bias, plot_param=albedo_diff, noaxis=True, **interp_param, source='diff'+source_ref+source_vtk)
 
-        # Fill recursive plot
+        tglob(params['id'])
+
+        ## Fill recursive plot
         if rec_plot:
             #recax.violinplot([bias.ravel()], positions=[nbias], showmeans=False, showmedians=True, showextrema=True, widths=0.9)
             
-            mask_015 = mtalr_on_msg.ravel()>0.15
-            bias_above = 100*bias.ravel()[mask_015]/mtalr_on_msg.ravel()[mask_015]
+            mask_015 = source_on_target_grid.ravel()>0.15
+            bias_above = 100*bias.ravel()[mask_015]/source_on_target_grid.ravel()[mask_015]
             bias_below = bias.ravel()[~mask_015]
 
             print_stats(bias_above, bias_below, label=['bias_above_0.15', 'bias_below_0.15'], fmt='{:.3f}')
@@ -652,8 +657,10 @@ def process_etal_series(**param):
             #x = np.random.normal(nbias, 0.04, size=len(bias.ravel()))
             #recax.scatter(x, bias.ravel(), alpha=0.2)
 
-            if (nbias == 18) and 1:
-                break
+        if (i==3) & 1:
+            print('--- BREAK LOOP')
+            break
+
 
     if rec_plot:
         recax1.plot(means[0], 'o:', c='k', markeredgecolor='k', markerfacecolor='r')
@@ -668,8 +675,8 @@ def process_etal_series(**param):
         recax2.set_xticklabels(dates)
         recax2.xaxis.set_tick_params(rotation=90)
         plt.tight_layout() 
-        plt.show()
-        #sys.exit()
+        #plt.show()
+        plt.savefig('res_stats.png')
     
     res_bias /= nbias
     res_bias2 /= nbias
@@ -677,10 +684,14 @@ def process_etal_series(**param):
     param2.pop('date', None)
     param2['start'] = param['start']
     param2['end'] = param['end']
-    p.imshow(res_bias, plot_param=albedo_diff, **param2, source='bias'+source_ref+source_vtk)
-    p.imshow(np.sqrt(res_bias2-res_bias**2), plot_param=albedo_biasstd, **param2, source='biasSTD'+source_ref+source_vtk)
+    p.imshow(res_bias, plot_param=albedo_diff, **param2, source='bias'+source_name+target_name)
+    p.imshow(np.sqrt(res_bias2-res_bias**2), plot_param=albedo_biasstd, **param2, source='biasSTD'+source_name+target_name)
 
-    
+    print_stats(np.sqrt(res_bias2-res_bias**2), label=['std_comp'], fmt='{:.8f}')
+
+    tglob.show()
+
+
 def process_etal_series_BACKUP(**param):
 
     df = get_all_filenames(**param)
