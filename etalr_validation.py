@@ -325,7 +325,7 @@ class SatelliteTools:
             ## Extract and save data
             data = np.full(target.shape, -1.)
             ti('interp np_full')
-            data[target.ground_mask] = interp_var[param['var']]
+            data[target.mask] = interp_var[param['var']]
             ti('interp fill_with_mask')
             self.export_to_h5(data, interp_type, **param)
             ti('interp export_to_h5')
@@ -383,6 +383,7 @@ class MODIS(SatelliteTools):
                          'var': 'lon',
                          'scaling': 1.}
 
+        self.data_scaling = 0.001
         self.data = None
 
     def get_data(self, data_file, mask_value=None):
@@ -423,6 +424,7 @@ class EPS(SatelliteTools):
                          'var': 'lon',
                          'scaling': 1.}
 
+        self.data_scaling = 0.0001
         self.data = None
 
     def get_data(self, data_file, mask_value=None):
@@ -462,8 +464,28 @@ class MSG(SatelliteTools):
                          'var': 'LON',
                          'scaling': 0.0001}
 
+        self.data_scaling = 0.0001
         self.data = None
         
+    def get_data(self, data_file, mask_value=None):
+        """
+        Read a data file and compute a variable mask
+        
+        :mask_value: None: return a flatten array with only valid data
+                     <number> : return an array with the shape of the read data and <number> used as non valid data.
+        """
+        self.ti()
+        print(f'--- Read {self.product.upper()}/{self.var} in {data_file} ...')
+        with h5py.File(data_file,'r') as h5f:
+            self.data0 = h5f[self.var][self.slicing]
+        self.mask = self.ground_mask & (self.data0!=-1)
+        if mask_value is None:
+            self.data = self.data0[self.mask]
+        else:
+            self.data = np.zeros(self.shape) + mask_value
+            self.data[self.mask] = self.data0[self.mask]
+        self.ti('get_data')
+        return self.data
 
 
 #------------ MAIN FUNCTIONS -------------
@@ -474,8 +496,8 @@ def process_etal_series(**param):
 
     ## Get ETAL on MSG grid 
     interp_param = {
-            #'var' : 'AL-BB-BH',
-            'var' : 'BRDF_Albedo_BSA_Shortwave',
+            'var' : 'AL-BB-BH',
+            #'var' : 'BRDF_Albedo_BSA_Shortwave',
             'kernel' : 'inverse_distance',
             #'kernel' : ['mean','inverse_distance','gaussian'],
             'radius' : 5,
@@ -488,11 +510,11 @@ def process_etal_series(**param):
 
     ## DEBUG: subsampling
     if 1:
-        #slicing_msg = (slice(None, None, 2), slice(None, None, 2))
-        slicing_msg = (slice(None), slice(None))
-        slicing_eps = (slice(None, None, 10), slice(None, None, 10))
+        slicing_msg = (slice(None, None, 2), slice(None, None, 2))
+        #slicing_msg = (slice(None), slice(None))
+        #slicing_eps = (slice(None, None, 10), slice(None, None, 10))
         slicing_modis = (slice(None, None, 10), slice(None, None, 10))
-        #slicing_eps = (slice(850, 17150, 1), slice(9000, 27000, 1)) # Remove points not on MSG disc
+        slicing_eps = (slice(850, 17150, 10), slice(9000, 27000, 10)) # Remove points not on MSG disc
         #slicing = (slice(380, 480), slice(1950, 2050)) # France
         #slicing = (slice(50, 700), slice(1550, 3250)) # Euro
         #slicing = (slice(700, 1850), slice(1240, 3450)) # NAfr
@@ -508,7 +530,8 @@ def process_etal_series(**param):
     # bsa-sw = black sky albedo shortwave
     modis = MODIS(product='bsa-sw', var='BRDF_Albedo_BSA_Shortwave', slicing=slicing_modis, mask_type=None)   
 
-    compare_two(new=etalr, ref=modis, grid='new', df_paths=df, **interp_param)
+    #compare_two(new=etalr, ref=modis, grid='new', df_paths=df, **interp_param)
+    compare_two(new=etalr, ref=mtalr, grid='ref', df_paths=df, **interp_param)
 
 
 def compare_two(new, ref, grid, df_paths, **interp_param):
@@ -596,7 +619,8 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
             #p.imshow(etal.data*0.0001, plot_param=albedo, show_axis=True, **params, source='etal')
 
         source_on_target_grid = source.interpolate_on(target, source_file=row[f'{source.product}_path'],
-                                                    use_cache=True, cache_slicing=target.slicing, date=params['date'], **interp_param)
+                                                    use_cache=False, cache_slicing=target.slicing,
+                                                    date=params['date'], **interp_param)
         target_on_target_grid = target.get_data(row[f'{target.product}_path'], mask_value=-1)
 
         print_stats(source_on_target_grid, target_on_target_grid, label=['source.product', 'target.product'])
@@ -604,8 +628,8 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
         ## Filtering
         source_on_target_grid[target_on_target_grid==-1] = -1
         target_on_target_grid[source_on_target_grid==-1] = -1
-        source_on_target_grid = source_on_target_grid*0.001
-        target_on_target_grid = target_on_target_grid*0.0001
+        source_on_target_grid = source_on_target_grid*source.data_scaling
+        target_on_target_grid = target_on_target_grid*target.data_scaling
         # Note: var *= 0.001 does not work if not the same type (ex var has int and 0.001 is float)
 
         print(f'{source.product}:',np.count_nonzero(source_on_target_grid<0),
