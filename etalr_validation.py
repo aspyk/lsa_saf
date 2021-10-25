@@ -491,7 +491,7 @@ def process_etal_series(**param):
         #slicing_msg = (slice(None, None, 2), slice(None, None, 2))
         slicing_msg = (slice(None), slice(None))
         slicing_eps = (slice(None, None, 10), slice(None, None, 10))
-        slicing_modis = (slice(None, None, 1), slice(None, None, 1))
+        slicing_modis = (slice(None, None, 10), slice(None, None, 10))
         #slicing_eps = (slice(850, 17150, 1), slice(9000, 27000, 1)) # Remove points not on MSG disc
         #slicing = (slice(380, 480), slice(1950, 2050)) # France
         #slicing = (slice(50, 700), slice(1550, 3250)) # Euro
@@ -612,8 +612,9 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
               f'{target.product}:', np.count_nonzero(target_on_target_grid<0))
 
         if 0:
+            pass
             #p.imshow(etalr_on_msg*0.0001, plot_param=albedo, show_axis=True, **params, **interp_param, source=source_vtk)
-            p.imshow(modis_on_eps*0.001, plot_param=albedo, show_axis=True, dpi=200, **params, **interp_param, source='modis-vtk')
+            #p.imshow(modis_on_eps*0.001, plot_param=albedo, show_axis=True, dpi=200, **params, **interp_param, source='modis-vtk')
 
 
         ## Compute bias
@@ -625,10 +626,10 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
         nbias += 1
 
         ## Plot global maps
-        if 0:
-            p.imshow(source_on_target_grid, plot_param=albedo, noaxis=True, **interp_param, source=source_vtk)
-            p.imshow(source_on_target_grid, plot_param=albedo, noaxis=True, var=interp_param['var'], date=interp_param['date'], source=source_ref)
-            p.imshow(bias, plot_param=albedo_diff, noaxis=True, **interp_param, source='diff'+source_ref+source_vtk)
+        if 1:
+            p.imshow(target_on_target_grid, plot_param=albedo, show_axis=True, **params, source=target_name)
+            p.imshow(source_on_target_grid, plot_param=albedo, show_axis=True, **params, **interp_param, source=source_name)
+            p.imshow(bias, plot_param=albedo_diff, show_axis=True, **params, **interp_param, source='diff'+source_name+target_name)
 
         tglob(params['id'])
 
@@ -657,7 +658,7 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
             #x = np.random.normal(nbias, 0.04, size=len(bias.ravel()))
             #recax.scatter(x, bias.ravel(), alpha=0.2)
 
-        if (i==3) & 1:
+        if (i==4) & 1:
             print('--- BREAK LOOP')
             break
 
@@ -685,9 +686,7 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
     param2['start'] = param['start']
     param2['end'] = param['end']
     p.imshow(res_bias, plot_param=albedo_diff, **param2, source='bias'+source_name+target_name)
-    p.imshow(np.sqrt(res_bias2-res_bias**2), plot_param=albedo_biasstd, **param2, source='biasSTD'+source_name+target_name)
-
-    print_stats(np.sqrt(res_bias2-res_bias**2), label=['std_comp'], fmt='{:.8f}')
+    p.imshow(np.sqrt(np.abs(res_bias2-res_bias**2)), plot_param=albedo_biasstd, **param2, source='biasSTD'+source_name+target_name)
 
     tglob.show()
 
