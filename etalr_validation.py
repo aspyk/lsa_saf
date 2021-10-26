@@ -548,6 +548,7 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
         print("--- ERROR: wrong grid parameter ('new' or 'ref')")
         sys.exit()
 
+    ## Create a path organizer 
     path_list = {'source_paths':{}, 'target_paths':{}}
     path_list['source_col'] = [col for col in [*df_paths] if col.startswith(source.product)]
     path_list['target_col'] = [col for col in [*df_paths] if col.startswith(target.product)]
@@ -558,6 +559,8 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
             else:
                 path_list[f'{obj}_paths']['data'] = c
 
+    ## Create cache di if not already exists
+    pathlib.Path('./cache').mkdir(parents=True, exist_ok=True)
 
     ## Init statistical arrays
     res_bias = np.zeros(target.shape, dtype=float)
@@ -634,11 +637,9 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
         source_paths = {k:row[v] for k,v in path_list['source_paths'].items()}
         target_paths = {k:row[v] for k,v in path_list['target_paths'].items()}
         
-        #source_on_target_grid = source.interpolate_on(target, source_file=row[f'{source.product}_path'],
         source_on_target_grid = source.interpolate_on(target, from_source=source_paths,
                                                     use_cache=False, cache_slicing=target.slicing,
                                                     date=params['date'], **interp_param)
-        #target_on_target_grid = target.get_data(row[f'{target.product}_path'], mask_value=-1)
         target_on_target_grid = target.get_data(from_source=target_paths, mask_value=-1)
 
         print_stats(source_on_target_grid, target_on_target_grid, label=['source.product', 'target.product'])
