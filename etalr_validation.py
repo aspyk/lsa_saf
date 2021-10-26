@@ -42,6 +42,8 @@ def get_all_filenames(**param):
     #path_dic['modis'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
     path_dic['bsa-sw'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
                               'format':'%Y/MCD43D51.A%Y%j.006.?????????????.hdf'}
+    path_dic['bsa-sw:qflag'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D31/tiles'),
+                              'format':'%Y/MCD43D31.A%Y%j.006.?????????????.hdf'}
     
     
     ## Input dates
@@ -282,7 +284,7 @@ class SatelliteTools:
                 self._lon = fl[self.lon_conf['var']][self.slicing]*self.lon_conf['scaling']
         return self._lon[self.mask]
 
-    def interpolate_on(self, target, source_file, use_cache, cache_slicing=slice(None), **param):
+    def interpolate_on(self, target, from_source, use_cache, cache_slicing=slice(None), **param):
         """If cache file exists, load it, otherwise interpolate"""
         
         print('Interpolation parameters:')
@@ -304,7 +306,7 @@ class SatelliteTools:
 
         if interpolation_required:
 
-            self.get_data(source_file)
+            self.get_data(from_source=from_source)
 
             ti = SimpleTimer()
 
@@ -386,7 +388,7 @@ class MODIS(SatelliteTools):
         self.data_scaling = 0.001
         self.data = None
 
-    def get_data(self, data_file, mask_value=None):
+    def get_data(self, from_source, mask_value=None):
         """
         Read a data file and compute a variable mask
         
@@ -394,8 +396,8 @@ class MODIS(SatelliteTools):
                      <number> : return an array with the shape of the read data and <number> used as non valid data.
         """
         self.ti()
-        print(f'--- Read {self.product.upper()}/{self.var} in {data_file} ...')
-        h4f = SD(data_file.as_posix(), SDC.READ)
+        print(f"--- Read {self.product.upper()}/{self.var} in {from_source['data']} ...")
+        h4f = SD(from_source['data'].as_posix(), SDC.READ)
         self.full_shape = (h4f.select(self.var).dimensions()['YDim:Grid_Parameter'], h4f.select(self.var).dimensions()['XDim:Grid_Parameter'])
         self.data0 = h4f.select(self.var)[self.slicing] 
         self.data0[self.data0==32767] = -1
@@ -427,7 +429,7 @@ class EPS(SatelliteTools):
         self.data_scaling = 0.0001
         self.data = None
 
-    def get_data(self, data_file, mask_value=None):
+    def get_data(self, from_source, mask_value=None):
         """
         Read a data file and compute a variable mask
         
@@ -435,8 +437,8 @@ class EPS(SatelliteTools):
                      <number> : return an array with the shape of the read data and <number> used as non valid data.
         """
         self.ti()
-        print(f'--- Read {self.product.upper()}/{self.var} in {data_file} ...')
-        with h5py.File(data_file,'r') as h5f:
+        print(f"--- Read {self.product.upper()}/{self.var} in {from_source['data']} ...")
+        with h5py.File(from_source['data'],'r') as h5f:
             self.data0 = h5f[self.var][self.slicing]
         self.mask = self.ground_mask & (self.data0!=-1)
         if mask_value is None:
@@ -467,7 +469,7 @@ class MSG(SatelliteTools):
         self.data_scaling = 0.0001
         self.data = None
         
-    def get_data(self, data_file, mask_value=None):
+    def get_data(self, from_source, mask_value=None):
         """
         Read a data file and compute a variable mask
         
@@ -475,8 +477,8 @@ class MSG(SatelliteTools):
                      <number> : return an array with the shape of the read data and <number> used as non valid data.
         """
         self.ti()
-        print(f'--- Read {self.product.upper()}/{self.var} in {data_file} ...')
-        with h5py.File(data_file,'r') as h5f:
+        print(f"--- Read {self.product.upper()}/{self.var} in {from_source['data']} ...")
+        with h5py.File(from_source['data'],'r') as h5f:
             self.data0 = h5f[self.var][self.slicing]
         self.mask = self.ground_mask & (self.data0!=-1)
         if mask_value is None:
@@ -512,9 +514,9 @@ def process_etal_series(**param):
     if 1:
         slicing_msg = (slice(None, None, 2), slice(None, None, 2))
         #slicing_msg = (slice(None), slice(None))
-        #slicing_eps = (slice(None, None, 10), slice(None, None, 10))
-        slicing_modis = (slice(None, None, 10), slice(None, None, 10))
+        #slicing_eps = (slice(None, None, 50), slice(None, None, 50))
         slicing_eps = (slice(850, 17150, 10), slice(9000, 27000, 10)) # Remove points not on MSG disc
+        slicing_modis = (slice(None, None, 50), slice(None, None, 50))
         #slicing = (slice(380, 480), slice(1950, 2050)) # France
         #slicing = (slice(50, 700), slice(1550, 3250)) # Euro
         #slicing = (slice(700, 1850), slice(1240, 3450)) # NAfr
@@ -545,6 +547,17 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
     else:
         print("--- ERROR: wrong grid parameter ('new' or 'ref')")
         sys.exit()
+
+    path_list = {'source_paths':{}, 'target_paths':{}}
+    path_list['source_col'] = [col for col in [*df_paths] if col.startswith(source.product)]
+    path_list['target_col'] = [col for col in [*df_paths] if col.startswith(target.product)]
+    for obj in ['source', 'target']:
+        for c in path_list[f'{obj}_col']:
+            if ':' in c.rstrip('_path'):
+                path_list[f'{obj}_paths'][c.rstrip('_path').split(':')[-1]] = c
+            else:
+                path_list[f'{obj}_paths']['data'] = c
+
 
     ## Init statistical arrays
     res_bias = np.zeros(target.shape, dtype=float)
@@ -618,10 +631,15 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
             #etal.get_data(row['etal_path'], mask_value=-1)
             #p.imshow(etal.data*0.0001, plot_param=albedo, show_axis=True, **params, source='etal')
 
-        source_on_target_grid = source.interpolate_on(target, source_file=row[f'{source.product}_path'],
+        source_paths = {k:row[v] for k,v in path_list['source_paths'].items()}
+        target_paths = {k:row[v] for k,v in path_list['target_paths'].items()}
+        
+        #source_on_target_grid = source.interpolate_on(target, source_file=row[f'{source.product}_path'],
+        source_on_target_grid = source.interpolate_on(target, from_source=source_paths,
                                                     use_cache=False, cache_slicing=target.slicing,
                                                     date=params['date'], **interp_param)
-        target_on_target_grid = target.get_data(row[f'{target.product}_path'], mask_value=-1)
+        #target_on_target_grid = target.get_data(row[f'{target.product}_path'], mask_value=-1)
+        target_on_target_grid = target.get_data(from_source=target_paths, mask_value=-1)
 
         print_stats(source_on_target_grid, target_on_target_grid, label=['source.product', 'target.product'])
 
