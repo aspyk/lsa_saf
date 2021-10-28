@@ -3,7 +3,6 @@
 
 This tool can read MSG, EPS and MODIS data files and interpolate them on each other in order to compare them.
 
-
 ## Installation
 
 - Create a new python env with python version >= 3.7
@@ -45,6 +44,31 @@ python etalr_validation.py
 
 TODO: create an unique external input file with all these parameters
   
+## Data source
+
+### MODIS
+Version 6 has been used for now:
+- MCD43D51: black-sky albedo (directional hemispherical reflectance)
+    - main page: https://lpdaac.usgs.gov/products/mcd43d51v006/
+    - detailed specifications: https://ladsweb.modaps.eosdis.nasa.gov/filespec/MODIS/6/MCD43D51 
+- MCD43D31: Albedo QA BRDF Quality:
+    - main page: https://lpdaac.usgs.gov/products/mcd43d31v006/
+    - detailed specifications: https://ladsweb.modaps.eosdis.nasa.gov/filespec/MODIS/6/MCD43D31
+
+Files may be directly download from this website:
+https://e4ftl01.cr.usgs.gov
+
+Path example for a MCD43D51 product file:
+https://e4ftl01.cr.usgs.gov/MOTA/MCD43D51.006/2014.01.14/MCD43D51.A2014014.006.2016146201118.hdf
+
+#### Note about V6.1 from MODIS on 28/10/2021:
+
+> Historic processing continues for MODIS V6.1 data products for years 2011 through 2018. It is the intent to complete processing of the archive by the end of the 2021 calendar year. The V6 land products will be available until the V6.1 processing is completed, upon which time the MODIS V6 products will be decommissioned.
+
+V6.1 web pages:
+- https://lpdaac.usgs.gov/products/mcd43d51v061/
+- https://lpdaac.usgs.gov/products/mcd43d31v061/
+
 ## Documentation
 
 ### Interpolation parameters
