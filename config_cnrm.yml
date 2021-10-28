@@ -1,3 +1,7 @@
+---
+#-----------------------------------------------------------------------------------
+# Main parameters. Format as list to allow the code to iterate over several combination of parameters  (see combine_param() function in etalr_validation.py)
+
 global_param:
   var:
     #- 'AL-BB-BH'
@@ -8,6 +12,9 @@ global_param:
   end:
     #- '2017-12-25'
     - '2009-12-25'
+
+#-----------------------------------------------------------------------------------
+# Parameters for interpolation
 
 interp_param:
   var: 'AL-BB-BH'
@@ -33,6 +40,9 @@ data_paths:
   bsa-sw:qflag: 
     root: '/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D31/tiles'
     format: '%Y/MCD43D31.A%Y%j.006.?????????????.hdf'
+
+#-----------------------------------------------------------------------------------
+# SatelliteTools objects
 
 MODIS:
   ground_mask_conf:
@@ -82,9 +92,10 @@ MSG:
       var: 'LON'
       scaling: 0.0001
 
+#-----------------------------------------------------------------------------------
 # Dir to store cache and output
 output_path:
-    cache: './output_extract'
+    cache: './cache'
     plot: './output_plot'
 
 
