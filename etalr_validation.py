@@ -406,6 +406,14 @@ class MODIS(SatelliteTools):
         self.full_shape = (h4f.select(self.var).dimensions()['YDim:Grid_Parameter'], h4f.select(self.var).dimensions()['XDim:Grid_Parameter'])
         self.data0 = h4f.select(self.var)[self.slicing] 
         self.data0[self.data0==32767] = -1
+
+        # MODIS quality flag (see README or https://lpdaac.usgs.gov/products/mcd43d31v006/)
+        if 0:
+            h4f_q = SD(from_source['qflag'].as_posix(), SDC.READ)
+            qflag = h4f.select('BRDF_Quality')[self.slicing] 
+            good_quality_mask = qflag==0
+            self.data0[~good_quality_mask] = -1
+
         self.mask = self.ground_mask & (self.data0!=-1)
         if mask_value is None:
             self.data = self.data0[self.mask]
