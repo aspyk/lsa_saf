@@ -1,14 +1,90 @@
+global_param:
+  var:
+    #- 'AL-BB-BH'
+     - 'BRDF_Albedo_BSA_Shortwave'
+  start:
+    #- '2015-01-05'
+    - '2007-01-05'
+  end:
+    #- '2017-12-25'
+    - '2009-12-25'
 
-input_path:
-    single_h5_file: '/cnrm/vegeo/fransenr/CODES/lsa_saf/input_data/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_202012250000'
+interp_param:
+  var: 'AL-BB-BH'
+  #var: 'BRDF_Albedo_BSA_Shortwave'
+  kernel: 'inverse_distance' # 'mean', 'inverse_distance' or 'gaussian'
+  radius: 5
+  #radius: 200
+  null_points: -1. # 'closest' or a float to be used as fill value
 
+data_paths:
+  mtalr:
+    root: '/cnrm/vegeo/SAT/DATA/MSG/Reprocessed-on-2017/MTAL'
+    format: '%Y/%m/%d/HDF5_LSASAF_MSG_ALBEDO-D10_MSG-Disk_%Y%m%d0000'
+  #etal: 
+    #root: '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL'
+    #format: '%Y/%m/%d/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_%Y%m%d0000'
+  etalr:
+    root: '/cnrm/vegeo/fransenr/CODES/DATA/NO_SAVE/EPS_Reprocess/ETAL'
+    format: '%Y/%m/%d/HDF5_LSASAF_M02-AVHR_ETAL_GLOBE_%Y%m%d0000'
+  bsa-sw: 
+    root: '/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'
+    format: '%Y/MCD43D51.A%Y%j.006.?????????????.hdf'
+  bsa-sw:qflag: 
+    root: '/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D31/tiles'
+    format: '%Y/MCD43D31.A%Y%j.006.?????????????.hdf'
+
+MODIS:
+  ground_mask_conf:
+    file: '' 
+    var: ''
+    type: ''
+  
+  lat_conf:
+    file: '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lat_modis.h5'
+    var: 'lat'
+    scaling: 1.
+  
+  lon_conf:
+      file: '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lon_modis.h5'
+      var: 'lon'
+      scaling: 1.
+
+EPS:
+  ground_mask_conf:
+    file: '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL/etal_lwmask.h5'
+    var: 'lwmask'
+    type: 'land'
+  
+  lat_conf:
+    file: '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
+    var: 'lat'
+    scaling: 1.
+  
+  lon_conf:
+      file: '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc'
+      var: 'lon'
+      scaling: 1.
+
+MSG:
+  ground_mask_conf:
+    file: '/mnt/lfs/d30/vegeo/fransenr/CODES/lsa_saf/hdf5_lsasaf_usgs-igbp_lwmask_msg-disk'
+    var: 'LWMASK'
+    type: 'land'
+  
+  lat_conf:
+    file: '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision'
+    var: 'LAT'
+    scaling: 0.0001
+  
+  lon_conf:
+      file: '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision'
+      var: 'LON'
+      scaling: 0.0001
 
 # Dir to store cache and output
 output_path:
-    extract: './output_extract'
-    merge: './output_merge'
-    trend: './output_trend'
+    cache: './output_extract'
     plot: './output_plot'
-    merged_filename: 'merged_trends.nc'
 
 

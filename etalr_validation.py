@@ -19,6 +19,22 @@ from vtk_tools import vtk_interpolation
 import pandas as pd
 import pathlib
 
+
+
+#------------ CONFIG FILE TO GLOBAL --------------------
+import yaml
+
+## Read config yaml file
+conf_fname = './config_cnrm.yml'
+print('--- Read config file {conf_fname} ...')
+with open(conf_fname, 'r') as stream:
+    try:
+        conf = yaml.safe_load(stream)
+    except yaml.YAMLError as exc:
+        print(exc)
+        sys.exit()
+
+
 #------------ INIT AND HELPER CLASSES AND FUNCTIONS --------------------
 
 def get_time_range(start, end, days=[], **param):
@@ -32,19 +48,8 @@ def get_time_range(start, end, days=[], **param):
     return dseries
 
 def get_all_filenames(**param):
-    path_dic = {}
-    path_dic['mtalr'] = {'root':pathlib.Path('/cnrm/vegeo/SAT/DATA/MSG/Reprocessed-on-2017/MTAL'),
-                              'format':'%Y/%m/%d/HDF5_LSASAF_MSG_ALBEDO-D10_MSG-Disk_%Y%m%d0000'}
-    #path_dic['etal']  = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL'),
-    #                          'format':'%Y/%m/%d/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_%Y%m%d0000'}
-    path_dic['etalr'] = {'root':pathlib.Path('/cnrm/vegeo/fransenr/CODES/DATA/NO_SAVE/EPS_Reprocess/ETAL'),
-                              'format':'%Y/%m/%d/HDF5_LSASAF_M02-AVHR_ETAL_GLOBE_%Y%m%d0000'}
-    #path_dic['modis'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
-    path_dic['bsa-sw'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'),
-                              'format':'%Y/MCD43D51.A%Y%j.006.?????????????.hdf'}
-    path_dic['bsa-sw:qflag'] = {'root':pathlib.Path('/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D31/tiles'),
-                              'format':'%Y/MCD43D31.A%Y%j.006.?????????????.hdf'}
     
+    path_dic = conf['data_paths']
     
     ## Input dates
     days = [5,15,25]
@@ -63,7 +68,7 @@ def get_all_filenames(**param):
     ## Check paths and fill the dataframe with valids
     for prod in path_dic.keys():
         for d in df.index:
-            root = path_dic[prod]['root']
+            root = pathlib.Path(path_dic[prod]['root'])
             path_format = path_dic[prod]['format']
             
             #if prod=='modis': # Unpredictable part in MODIS file name, need to glob...
@@ -218,6 +223,8 @@ class SatelliteTools:
         self._lat = None
         self._lon = None
 
+        self.get_config()
+
     @property
     def full_shape(self):
         """Get global shape before slicing"""
@@ -366,24 +373,20 @@ class SatelliteTools:
 
         print_stats(self.data)
         print(np.count_nonzero(self.data==-1))
-    
+
+    def whoami(self):
+        return type(self).__name__
+
+    def get_config(self):
+        for key in conf[self.whoami()]:
+            setattr(self, key, conf[self.whoami()][key])
 
 class MODIS(SatelliteTools):
-    def __init__(self, product, var, slicing=slice(None), mask_type=None):
+    def __init__(self, product, var, slicing=slice(None)):
         
-        super().__init__(product, var, slicing)
-
         self.ti = SimpleTimer()
 
-        self.ground_mask_conf = {'file': None,
-                                 'var': 'lwmask',
-                                 'type': mask_type}
-        self.lat_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lat_modis.h5',
-                         'var': 'lat',
-                         'scaling': 1.}
-        self.lon_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lon_modis.h5',
-                         'var': 'lon',
-                         'scaling': 1.}
+        super().__init__(product, var, slicing)
 
         self.data_scaling = 0.001
         self.data = None
@@ -410,21 +413,11 @@ class MODIS(SatelliteTools):
         self.ti('get_data')
 
 class EPS(SatelliteTools):
-    def __init__(self, product, var, slicing=slice(None), mask_type='land'):
-        
-        super().__init__(product, var, slicing)
+    def __init__(self, product, var, slicing=slice(None)):
 
         self.ti = SimpleTimer()
-
-        self.ground_mask_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL/etal_lwmask.h5',
-                                 'var': 'lwmask',
-                                 'type': mask_type}
-        self.lat_conf = {'file': '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc',
-                         'var': 'lat',
-                         'scaling': 1.}
-        self.lon_conf = {'file': '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/metop_lonlat.nc',
-                         'var': 'lon',
-                         'scaling': 1.}
+        
+        super().__init__(product, var, slicing)
 
         self.data_scaling = 0.0001
         self.data = None
@@ -450,21 +443,11 @@ class EPS(SatelliteTools):
         return self.data
 
 class MSG(SatelliteTools):
-    def __init__(self, product, var, slicing=slice(None), mask_type='land'):
-
-        super().__init__(product, var, slicing)
+    def __init__(self, product, var, slicing=slice(None)):
 
         self.ti = SimpleTimer()
 
-        self.ground_mask_conf = {'file': 'hdf5_lsasaf_usgs-igbp_lwmask_msg-disk',
-                                 'var': 'LWMASK',
-                                 'type': mask_type}
-        self.lat_conf = {'file': '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LAT_MSG-Disk_4bytesPrecision',
-                         'var': 'LAT',
-                         'scaling': 0.0001}
-        self.lon_conf = {'file': '/cnrm/vegeo/SAT/DATA/MSG/NRT-Operational/INPUTS/LAT-LON/MSG-Disk/HDF5_LSASAF_MSG_LON_MSG-Disk_4bytesPrecision',
-                         'var': 'LON',
-                         'scaling': 0.0001}
+        super().__init__(product, var, slicing)
 
         self.data_scaling = 0.0001
         self.data = None
@@ -496,17 +479,7 @@ def process_etal_series(**param):
 
     df = get_all_filenames(**param)
 
-    ## Get ETAL on MSG grid 
-    interp_param = {
-            'var' : 'AL-BB-BH',
-            #'var' : 'BRDF_Albedo_BSA_Shortwave',
-            'kernel' : 'inverse_distance',
-            #'kernel' : ['mean','inverse_distance','gaussian'],
-            'radius' : 5,
-            #'radius' : 200,
-            #'null_points' : 'closest',
-            'null_points' : -1.,
-           }
+    interp_param = conf['interp_param'] 
 
     ## Data accumulation
 
@@ -526,11 +499,10 @@ def process_etal_series(**param):
         interp_param['string_exclude'] = ['slicing']
 
     ## Create product objects
-    mtalr = MSG(product='mtalr', var='AL-BB-BH', slicing=slicing_msg, mask_type='land')   
-    etalr = EPS(product='etalr', var='AL-BB-BH', slicing=slicing_eps, mask_type='land')   
-    #etal = EPS(product='etal', var=interp_param['var'], slicing=slicing_eps, mask_type='land')   
+    mtalr = MSG(product='mtalr', var='AL-BB-BH', slicing=slicing_msg)   
+    etalr = EPS(product='etalr', var='AL-BB-BH', slicing=slicing_eps)   
     # bsa-sw = black sky albedo shortwave
-    modis = MODIS(product='bsa-sw', var='BRDF_Albedo_BSA_Shortwave', slicing=slicing_modis, mask_type=None)   
+    modis = MODIS(product='bsa-sw', var='BRDF_Albedo_BSA_Shortwave', slicing=slicing_modis)   
 
     #compare_two(new=etalr, ref=modis, grid='new', df_paths=df, **interp_param)
     compare_two(new=etalr, ref=mtalr, grid='ref', df_paths=df, **interp_param)
@@ -769,17 +741,7 @@ def combine_param(param_dic):
 
 if __name__=='__main__':
     
-    test = {
-            #'var' : ['AL-BB-BH'],
-            'var' : ['BRDF_Albedo_BSA_Shortwave'],
-            #'start' : ['2015-01-05'],
-            'start' : ['2007-01-05'],
-            #'end' : ['2017-12-25'],
-            'end' : ['2009-12-25'],
-            #'size' : [10],
-           }
-
-    for param in combine_param(test):
+    for param in combine_param(conf['global_param']):
         for k,v in param.items():
             print(k, ':', v)
         try:
