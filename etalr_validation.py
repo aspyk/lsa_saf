@@ -186,7 +186,7 @@ class Plots:
         self.ax.set_title(param_str, fontsize=10 )
         plt.tight_layout()
         
-        im_name = f"res_proj2vtk_{self.type}_{param_to_string(param, shorten=True)}.png"
+        im_name = pathlib.Path(conf['output_path']['plot']) / f"res_proj2vtk_{self.type}_{param_to_string(param, shorten=True)}.png"
         if show_axis:
             plt.savefig(im_name, bbox_inches='tight', dpi=dpi)
         else:
@@ -303,7 +303,8 @@ class SatelliteTools:
         interpolation_required = ~use_cache
         if use_cache:
             ## Cache files are  stored in working directory for now
-            h5_path = pathlib.Path(f"./cache/cache_{interp_type}_{param_to_string(param)}.h5")
+            #h5_path = pathlib.Path(f"./cache/cache_{interp_type}_{param_to_string(param)}.h5")
+            h5_path = pathlib.Path(conf['output_path']['cache']) / f"cache_{interp_type}_{param_to_string(param)}.h5"
             data = self.load_h5_cache(h5_path, param['var'], cache_slicing)
             if data is not None:
                 self.data_interp = data
@@ -343,7 +344,8 @@ class SatelliteTools:
             return data
 
     def export_to_h5(self, data, name, **param):
-        h5_name = f"./cache/cache_{name}_{param_to_string(param)}.h5"
+        #h5_name = f"./cache/cache_{name}_{param_to_string(param)}.h5"
+        h5_name = pathlib.Path(conf['output_path']['cache']) / f"cache_{name}_{param_to_string(param)}.h5"
         with h5py.File(h5_name, 'w') as h5_file:
             ## Proper way to save data as integer
             if 1:
@@ -531,8 +533,9 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
             else:
                 path_list[f'{obj}_paths']['data'] = c
 
-    ## Create cache di if not already exists
-    pathlib.Path('./cache').mkdir(parents=True, exist_ok=True)
+    ## Create output path dirs if not already exists
+    for k,p in conf['output_path'].items():
+        pathlib.Path(p).mkdir(parents=True, exist_ok=True)
 
     ## Init statistical arrays
     res_bias = np.zeros(target.shape, dtype=float)
