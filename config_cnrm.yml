@@ -98,4 +98,8 @@ output_path:
     cache: './cache'
     plot: './output_plot'
 
+#-----------------------------------------------------------------------------------
+# Debug options
+debug:
+  profiling: 0
 

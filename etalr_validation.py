@@ -4,7 +4,6 @@ import numpy as np
 from pyhdf.SD import SD, SDC # To read HDF-EOS (HDF4 type) MODIS format.
 
 import os,sys
-from tools import SimpleTimer
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -25,7 +24,11 @@ import pathlib
 import yaml
 
 ## Read config yaml file
-conf_fname = './config_cnrm.yml'
+if not sys.argv[-1].endswith('.yml'):
+    print('--- ERROR: need to give a YAML config file in argument:')
+    print(' > python etalr_validation.py <config_file.yml>')
+    sys.exit()
+conf_fname = sys.argv[-1]
 print('--- Read config file {conf_fname} ...')
 with open(conf_fname, 'r') as stream:
     try:
@@ -33,6 +36,15 @@ with open(conf_fname, 'r') as stream:
     except yaml.YAMLError as exc:
         print(exc)
         sys.exit()
+
+## Apply debug option
+b_prof = conf['debug']['profiling']
+if b_prof:
+    from tools import SimpleTimer
+else:
+    class SimpleTimer:
+        def __call__(self, msg=None): pass
+        def show(self): pass
 
 
 #------------ INIT AND HELPER CLASSES AND FUNCTIONS --------------------
@@ -645,8 +657,6 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
 
         ## Compute bias
         bias = source_on_target_grid - target_on_target_grid
-        print(bias.shape)
-        print(res_bias.shape)
         res_bias += bias
         res_bias2 += bias*bias
         nbias += 1
@@ -717,6 +727,7 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
     tglob.show()
 
 def main(param):
+    
     ti = SimpleTimer()
 
     process_etal_series(**param)        
