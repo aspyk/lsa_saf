@@ -32,18 +32,13 @@ git clone https://github.com/aspyk/lsa_saf.git
     
 ## Usage/Examples
 
-1. Choose variable and dates to process in `__main__`
-1. Check and change if necessary the paths in the script:
-    - path to data files in `get_all_filenames()`
-    - path to longitude, latitude and land mask (if any) files in each SatelliteTools subclass
-1. Choose your parameters for interpolation in `process_etal_series()`
+1. In the YAML config file choose/change all the paths, parameters and variables you need.
+1 In the code in `process_etal_series()` function, you still have to choose the slicing you want to apply on the data (full map or or only a part to debug or analyze a region)
 1. Then run it:
 ```
-python etalr_validation.py
+python etalr_validation.py config_cnrm.yml
 ```
 
-TODO: create an unique external input file with all these parameters
-  
 ## Data source
 
 ### MODIS
@@ -89,6 +84,9 @@ See https://vtk.org/doc/nightly/html/classvtkGeneralizedKernel.html for detailed
 
 ### Satellite data classes
 
+A main class `SatelitteTools` has all the common functions to deal with 2D satellite data, and then subclasses are derived from it to add or override specific methods and attributes:
+
+
 ```python
 class SatelliteTools:
 
@@ -108,27 +106,21 @@ class SatelliteTools:
     export_to_h5()
     load_h5_cache()
     describe()
+    whoami()
+    get_config()
 ```
+
+And the subclasses:
 
 ```python
 class <satellite_type>(SatelliteTools):
 
-    self.ground_mask_conf = {'file': None,
-                             'var': 'lwmask',
-                             'type': mask_type}
-    self.lat_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lat_modis.h5',
-                     'var': 'lat',
-                     'scaling': 1.}
-    self.lon_conf = {'file': '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lon_modis.h5',
-                     'var': 'lon',
-                     'scaling': 1.}
-        
     self.data = None
     self.data_scaling
 
     get_data()
 ```
-that is for now:
+Note that the only difference here are how to access the data. For now we have the following data types:
 
 ```python
 class MODIS(SatelliteTools):
@@ -140,3 +132,11 @@ class EPS(SatelliteTools):
 class MSG(SatelliteTools):
     [...]
 ```
+
+### Outputs
+
+Outputs may be of several types:
+- global maps of a variable or a bias between two variables.
+- temporal graph showing statistics for each date.
+
+The class `Plots` is a helper class that make global map plotting easier using only one line to save a plot. Temporal graph are still done manually.

@@ -24,6 +24,9 @@ interp_param:
   #radius: 200
   null_points: -1. # 'closest' or a float to be used as fill value
 
+#-----------------------------------------------------------------------------------
+# Paths to product files
+
 data_paths:
   mtalr:
     root: '/cnrm/vegeo/SAT/DATA/MSG/Reprocessed-on-2017/MTAL'
@@ -32,7 +35,7 @@ data_paths:
     #root: '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL'
     #format: '%Y/%m/%d/HDF5_LSASAF_M01-AVHR_ETAL_GLOBE_%Y%m%d0000'
   etalr:
-    root: '/cnrm/vegeo/fransenr/CODES/DATA/NO_SAVE/EPS_Reprocess/ETAL'
+    root: '/mnt/lfs/d30/vegeo/SAT/DATA/EPS/EPS_Reprocess/ETAL'
     format: '%Y/%m/%d/HDF5_LSASAF_M02-AVHR_ETAL_GLOBE_%Y%m%d0000'
   bsa-sw: 
     root: '/mnt/lfs/d30/vegeo/SAT/DATA/MODIS/MODIS-MCD43D51/tiles'
@@ -51,18 +54,18 @@ MODIS:
     type: ''
   
   lat_conf:
-    file: '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lat_modis.h5'
+    file: './ancillary/lat_modis.h5'
     var: 'lat'
     scaling: 1.
   
   lon_conf:
-      file: '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/MODIS/lon_modis.h5'
+      file: './ancillary/lon_modis.h5'
       var: 'lon'
       scaling: 1.
 
 EPS:
   ground_mask_conf:
-    file: '/mnt/lfs/d30/vegeo/fransenr/CODES/DATA/NO_SAVE/ETAL/etal_lwmask.h5'
+    file: './ancillary/etal_lwmask.h5'
     var: 'lwmask'
     type: 'land'
   
@@ -78,7 +81,7 @@ EPS:
 
 MSG:
   ground_mask_conf:
-    file: '/mnt/lfs/d30/vegeo/fransenr/CODES/lsa_saf/hdf5_lsasaf_usgs-igbp_lwmask_msg-disk'
+    file: './ancillary/hdf5_lsasaf_usgs-igbp_lwmask_msg-disk'
     var: 'LWMASK'
     type: 'land'
   
