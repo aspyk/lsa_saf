@@ -61,9 +61,16 @@ class vtk_interpolation:
     
         np_pts = np.array((x,y,z)).T
     
-        #vtk_pts = self.numpy_to_vtkpoints(np_pts) 
         vtk_pts = vtk.vtkPoints()
-        vtk_pts.SetData(ns.numpy_to_vtk(np_pts, deep=True))
+        ## Direct method: create a multi-component vtkarray from multidim numpy array (may cause mem error on big array, to be checked)
+        if 0:
+            vtk_pts.SetData(ns.numpy_to_vtk(np_pts, deep=True))
+        ## Create a multi-component vtkarray from a flatten numpy array
+        else:
+            vtk_array = ns.numpy_to_vtk(np_pts.ravel(), deep=True)
+            vtk_array.SetNumberOfComponents(3)
+            vtk_array.SetNumberOfTuples(int(vtk_array.GetSize()/3))
+            vtk_pts.SetData(vtk_array)
     
         ## Create vtk point data
         vars = []
@@ -149,11 +156,12 @@ class vtk_interpolation:
 def test(plot=False):
         
     param = {
-            'var' : 'AL-BB-BH',
-            'kernel' : 'inverse_distance', # choices are 'mean', 'gaussian' and 'inverse'
-            'radius' : 5, # float in [km]
-            'null_points' : 'closest', # choices are 'closest' or a float
-            #'null_points' : -1.,
+            'var' : 'var1',
+            #'kernel' : 'inverse_distance', # choices are 'mean', 'gaussian' and 'inverse'
+            'kernel' : 'mean', # choices are 'mean', 'gaussian' and 'inverse'
+            'radius' : 2500, # float in [km]
+            #'null_points' : 'closest', # choices are 'closest' or a float
+            'null_points' : -1.,
            }
 
     ## Create fake data
