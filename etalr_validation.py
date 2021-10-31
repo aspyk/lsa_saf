@@ -50,6 +50,12 @@ else:
 #------------ INIT AND HELPER CLASSES AND FUNCTIONS --------------------
 
 def get_time_range(start, end, days=[], **param):
+    """
+    Generate a list of dates
+
+    Repeat for each month between `start` and `end` the days given in `days`.
+    Use here to get the 05, 15 and 25 dates of ETALR product.
+    """
     dseries = pd.date_range(start, end, freq='D')
     
     if len(days)>0:
@@ -60,6 +66,9 @@ def get_time_range(start, end, days=[], **param):
     return dseries
 
 def get_all_filenames(**param):
+    """
+    Generate a DataFrame with all the paths of the required products, indexed by the date. None if no file is found.
+    """
     
     path_dic = conf['data_paths']
     
@@ -115,6 +124,7 @@ def param_to_string(param, sep1='_', sep2='-', shorten=False):
     Keep only alphanumeric char in parameters and create a unique long string with custom separators.
     Separators are use like this:
     {p1:v1, p2:v2} -> p1<sep2>v1<sep1>p2<sep2>v2
+    `shorten` param to True shorten the name of the keys to the first three letters (to reduce the size of the file name if use in this case)
     """
     ## Remove some unwanted parameters if any
     if 'string_exclude' in param.keys():
@@ -129,6 +139,11 @@ def param_to_string(param, sep1='_', sep2='-', shorten=False):
     return param_str
 
 def print_stats(*arrays, label=None, fmt='{:.2f}'):
+    """
+    Print stats of several arrays.
+
+    Use Pandas describe() function to print stats on arrays. Label and format can be given in argument to change possibly confusing default label and format.
+    """
     res = []
     for ida,a in enumerate(arrays):
         if label is None:
@@ -140,9 +155,14 @@ def print_stats(*arrays, label=None, fmt='{:.2f}'):
     print(res)
 
 class Plots:
+    """ Helper class to create plots
+
+    Allow to use only one line to export recurring plot.
+    Can create imshow or scatter plot.
+    """
 
     def __init__(self, zoom=False):
-        if zoom:
+        if zoom: 
             lat1 = 380
             lat2 = 480
             lon1 = 1950
@@ -193,7 +213,15 @@ class Plots:
         self.finalize(noaxis, **param)
 
     def finalize(self, show_axis=True, dpi='figure', **param):
-        from textwrap import wrap
+        """
+        Save the figure to disk.
+
+        Args:
+            dpi (int): Can be change to adapte the size of the figure.
+            show_axis (bool): usual plot if True with axis and colorbar. If False, crop to the graph only. Useful to make mosaic for example.
+        
+        """
+        from textwrap import wrap 
         param_str = '\n'.join(wrap(param_to_string(param, sep1=' | ', sep2=':'), 60))
         self.ax.set_title(param_str, fontsize=10 )
         plt.tight_layout()
@@ -221,7 +249,15 @@ class Plots:
 #------------ SATELLITE CLASSES FOR DATA PROCESSING ----------------
 
 class SatelliteTools:
+    """Helper class to host all common methods for satellite products comparison."""
+
     def __init__(self, product, var, slicing=slice(None)):
+        """
+        Args:
+            product (str): Name of the product.
+            var (st): name of the variable to be read in the HDF file.
+            slicing (slice or tuple of slices): slicing use to reduce the amount of data to read or select only a region.
+        """
         self.product = product
         self.var = var
         self.slicing= slicing
@@ -235,7 +271,7 @@ class SatelliteTools:
         self._lat = None
         self._lon = None
 
-        self.get_config()
+        self.get_config() 
 
     @property
     def full_shape(self):
@@ -261,6 +297,7 @@ class SatelliteTools:
     
     @property
     def mask(self):
+        """Get the data mask and set it to the ground mask if it has not yet been defined."""
         if self._mask is True:
             self._mask = self.ground_mask
         return self._mask
@@ -271,9 +308,7 @@ class SatelliteTools:
 
     @property
     def ground_mask(self):
-        """
-        Load ground mask if asked 
-        """
+        """Load ground mask only if required."""
         self.ti()
         if self._ground_mask is True:
             if self.ground_mask_conf['type'] is not None:
@@ -289,6 +324,7 @@ class SatelliteTools:
 
     @property
     def lat(self):
+        """Load latitude array only if required."""
         if self._lat is None:
             print(f"--- Read {self.product.upper()} lat in {self.lat_conf['file']} ...")
             with h5py.File(self.lat_conf['file'], 'r') as fl:
@@ -297,6 +333,7 @@ class SatelliteTools:
 
     @property
     def lon(self):
+        """Load longitude array only if required."""
         if self._lon is None:
             print(f"--- Read {self.product.upper()} lon in {self.lon_conf['file']} ...")
             with h5py.File(self.lon_conf['file'], 'r') as fl:
@@ -304,7 +341,18 @@ class SatelliteTools:
         return self._lon[self.mask]
 
     def interpolate_on(self, target, from_source, use_cache, cache_slicing=slice(None), **param):
-        """If cache file exists, load it, otherwise interpolate"""
+        """
+        If cache file exists, load it, otherwise interpolate.
+        
+        Use vtk interpolation to convert data format to an other. Data are converted to 3D points thanks to there lon/lat arrays.
+        See vtk_tool.py to get more details about the interpolation parameters.
+
+        Args:
+            target (SatelliteTool subclass): Satellite format on which data are going to be interpolated.
+            from_source (Dataframe): DataFrame with the paths of the data to be interpolated.
+            use_cache (bool): Try to find and read (or not) a cache file with the result of the previously done interpolation.
+            cache_slicing (slice or tuple of slices): A slicing applied to the cache when read (it can be useful to cache the full interpolation and then reload only some parts)
+        """
         
         print('Interpolation parameters:')
         for k,v in param.items():
@@ -356,6 +404,7 @@ class SatelliteTools:
             return data
 
     def export_to_h5(self, data, name, **param):
+        """Save cache file with all parameters in the file name"""
         #h5_name = f"./cache/cache_{name}_{param_to_string(param)}.h5"
         h5_name = pathlib.Path(conf['output_path']['cache']) / f"cache_{name}_{param_to_string(param)}.h5"
         with h5py.File(h5_name, 'w') as h5_file:
@@ -372,6 +421,7 @@ class SatelliteTools:
         print(f"--- Output h5 saved to: {h5_name}")
 
     def load_h5_cache(self, h5_path, var, slicing=slice(None)):
+        """Load cache file."""
         if h5_path.is_file():
             print(f"--- Read h5 from: {h5_path} ...")
             with h5py.File(h5_path, 'r') as h5_file:
@@ -382,6 +432,7 @@ class SatelliteTools:
             return None
             
     def describe(self):
+        """Debug function to print specific things."""
         print(self.data.shape)
         print(self.lon.shape)
 
@@ -389,13 +440,23 @@ class SatelliteTools:
         print(np.count_nonzero(self.data==-1))
 
     def whoami(self):
+        """Return the type of the subclass"""
         return type(self).__name__
 
     def get_config(self):
+        """Set automatically attributes from config file."""
         for key in conf[self.whoami()]:
             setattr(self, key, conf[self.whoami()][key])
 
 class MODIS(SatelliteTools):
+    """
+    MODIS subclass of SatelliteTools
+
+    MODIS data use two different files for the data and the quality flag. Data are stored in PlateCarree projection.
+    No land/water mask is read for it (not sure if it exists...)
+    Even if lon/lat are straightforward for this projection, a cache file is used to store them.
+    """
+
     def __init__(self, product, var, slicing=slice(None)):
         
         self.ti = SimpleTimer()
@@ -409,8 +470,9 @@ class MODIS(SatelliteTools):
         """
         Read a data file and compute a variable mask
         
-        :mask_value: None: return a flatten array with only valid data
-                     <number> : return an array with the shape of the read data and <number> used as non valid data.
+        Args:
+            mask_value (None): return a flatten array with only valid data
+                       (float): return an array with the shape of the read data and <number> used as non valid data.
         """
         self.ti()
         print(f"--- Read {self.product.upper()}/{self.var} in {from_source['data']} ...")
@@ -435,6 +497,12 @@ class MODIS(SatelliteTools):
         self.ti('get_data')
 
 class EPS(SatelliteTools):
+    """
+    EPS subclass of SatelliteTools
+
+    EPS data are stored in Sinusoidal projection.
+    """
+
     def __init__(self, product, var, slicing=slice(None)):
 
         self.ti = SimpleTimer()
@@ -465,6 +533,12 @@ class EPS(SatelliteTools):
         return self.data
 
 class MSG(SatelliteTools):
+    """
+    MSG subclass of SatelliteTools
+
+    MSG data are stored in geostationnary  projection.
+    """
+
     def __init__(self, product, var, slicing=slice(None)):
 
         self.ti = SimpleTimer()
@@ -498,6 +572,7 @@ class MSG(SatelliteTools):
 #------------ MAIN FUNCTIONS -------------
 
 def process_etal_series(**param):
+    """Set the slicing and create the Satellite objects."""
 
     df = get_all_filenames(**param)
 
@@ -531,6 +606,19 @@ def process_etal_series(**param):
 
 
 def compare_two(new, ref, grid, df_paths, **interp_param):
+    """
+    Main loop of the code.
+    
+    This function initialize some list and arrays, then loop on all the dates to compare two products for each date.
+    Then statistical values are computed and put in previously mentioned lists and arrays.
+    Finally, some plots are done during and/or at the end of the loop. These plots can be globals map or temporal.
+
+    Args:
+        new (SatelliteTools subclass): The data that we want to compare.
+        ref (SatelliteTools subclass): The reference data against with the new data are going to be compared.
+        grid ('new' or 'ref'): the projection that will be used to compare both data will be either the one of 'new' or 'ref'.
+        df_paths (DataFrame): DataFrame containing all the paths to data file.
+    """
 
     if grid=='new':
         source = ref
@@ -724,7 +812,7 @@ def compare_two(new, ref, grid, df_paths, **interp_param):
     p.imshow(res_bias, plot_param=albedo_diff, **param2, source='bias'+source_name+target_name)
     p.imshow(np.sqrt(np.abs(res_bias2-res_bias**2)), plot_param=albedo_biasstd, **param2, source='biasSTD'+source_name+target_name)
 
-    tglob.show()
+    tglob.show() 
 
 def main(param):
     
